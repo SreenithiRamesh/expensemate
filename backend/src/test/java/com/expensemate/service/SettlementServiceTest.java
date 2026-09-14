@@ -7,6 +7,7 @@ import com.expensemate.dto.settlement.SettlementResponse;
 import com.expensemate.entity.ExpenseGroup;
 import com.expensemate.entity.Settlement;
 import com.expensemate.entity.User;
+import com.expensemate.enums.ActivityType;
 import com.expensemate.enums.SettlementMode;
 import com.expensemate.exception.InvalidRequestException;
 import com.expensemate.repository.ExpenseGroupRepository;
@@ -25,8 +26,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,6 +47,10 @@ class SettlementServiceTest {
     @Mock
     private DebtSimplificationService debtSimplificationService;
 
+    // M13
+    @Mock
+    private ActivityService activityService;
+
     private SettlementService service;
 
     @BeforeEach
@@ -57,31 +61,37 @@ class SettlementServiceTest {
                 userRepository,
                 expenseGroupRepository,
                 groupMemberRepository,
-                debtSimplificationService
+                debtSimplificationService,
+                activityService
         );
     }
 
     @Test
     void shouldCreateFullSettlement() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
 
-        User creditor = user(
-                1L,
-                "Sree"
-        );
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
+        ExpenseGroup group =
+                group(
+                        2L
+                );
 
         prepareValidGroup(
                 debtor,
                 creditor,
-                group
+                group,
+                "test@example.com",
+                "full-key-1"
         );
 
         when(
@@ -130,34 +140,64 @@ class SettlementServiceTest {
                 response.mode()
         );
 
+        assertEquals(
+                2L,
+                response.groupId()
+        );
+
+        assertEquals(
+                2L,
+                response.fromUserId()
+        );
+
+        assertEquals(
+                1L,
+                response.toUserId()
+        );
+
         verify(
                 settlementRepository
         ).save(
                 any(Settlement.class)
+        );
+
+        verify(
+                activityService
+        ).record(
+                eq(group),
+                eq(debtor),
+                eq(ActivityType.SETTLEMENT_CREATED),
+                contains("settled"),
+                isNull()
         );
     }
 
     @Test
     void shouldCreatePartialSettlement() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
 
-        User creditor = user(
-                1L,
-                "Sree"
-        );
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
+        ExpenseGroup group =
+                group(
+                        2L
+                );
 
         prepareValidGroup(
                 debtor,
                 creditor,
-                group
+                group,
+                "test@example.com",
+                "partial-key-1"
         );
 
         when(
@@ -213,29 +253,44 @@ class SettlementServiceTest {
         ).save(
                 any(Settlement.class)
         );
+
+        verify(
+                activityService
+        ).record(
+                eq(group),
+                eq(debtor),
+                eq(ActivityType.SETTLEMENT_CREATED),
+                contains("300.00"),
+                isNull()
+        );
     }
 
     @Test
     void shouldRejectOverpayment() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
 
-        User creditor = user(
-                1L,
-                "Sree"
-        );
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
+        ExpenseGroup group =
+                group(
+                        2L
+                );
 
         prepareValidGroup(
                 debtor,
                 creditor,
-                group
+                group,
+                "test@example.com",
+                "overpay-key"
         );
 
         when(
@@ -272,7 +327,7 @@ class SettlementServiceTest {
                 );
 
         assertEquals(
-                "Settlement amount exceeds outstanding debt",
+                "Settlement amount cannot exceed outstanding debt",
                 exception.getMessage()
         );
 
@@ -282,29 +337,38 @@ class SettlementServiceTest {
         ).save(
                 any(Settlement.class)
         );
+
+        verifyNoInteractions(
+                activityService
+        );
     }
 
     @Test
     void shouldRejectZeroAmount() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
 
-        User creditor = user(
-                1L,
-                "Sree"
-        );
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
+        ExpenseGroup group =
+                group(
+                        2L
+                );
 
         prepareValidGroup(
                 debtor,
                 creditor,
-                group
+                group,
+                "test@example.com",
+                "zero-key"
         );
 
         when(
@@ -349,29 +413,38 @@ class SettlementServiceTest {
         ).save(
                 any(Settlement.class)
         );
+
+        verifyNoInteractions(
+                activityService
+        );
     }
 
     @Test
     void shouldRejectNegativeAmount() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
 
-        User creditor = user(
-                1L,
-                "Sree"
-        );
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
+        ExpenseGroup group =
+                group(
+                        2L
+                );
 
         prepareValidGroup(
                 debtor,
                 creditor,
-                group
+                group,
+                "test@example.com",
+                "negative-key"
         );
 
         when(
@@ -418,28 +491,33 @@ class SettlementServiceTest {
         ).save(
                 any(Settlement.class)
         );
+
+        verifyNoInteractions(
+                activityService
+        );
     }
 
     @Test
     void shouldRejectSelfSettlement() {
 
-        User user = user(
-                1L,
-                "Sree"
-        );
+        User currentUser =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
+        ExpenseGroup group =
+                group(
+                        2L
+                );
 
         when(
-                userRepository
-                        .findByEmail(
-                                "sree@example.com"
-                        )
+                userRepository.findByEmail(
+                        "sree@example.com"
+                )
         ).thenReturn(
                 Optional.of(
-                        user
+                        currentUser
                 )
         );
 
@@ -474,13 +552,12 @@ class SettlementServiceTest {
         );
 
         when(
-                userRepository
-                        .findById(
-                                1L
-                        )
+                userRepository.findById(
+                        1L
+                )
         ).thenReturn(
                 Optional.of(
-                        user
+                        currentUser
                 )
         );
 
@@ -512,35 +589,37 @@ class SettlementServiceTest {
                 debtSimplificationService
         );
 
-        verify(
-                settlementRepository,
-                never()
-        ).save(
-                any(Settlement.class)
+        verifyNoInteractions(
+                activityService
         );
     }
 
     @Test
     void shouldRejectWhenNoOutstandingDebtExists() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
 
-        User creditor = user(
-                1L,
-                "Sree"
-        );
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
+        ExpenseGroup group =
+                group(
+                        2L
+                );
 
         prepareValidGroup(
                 debtor,
                 creditor,
-                group
+                group,
+                "test@example.com",
+                "no-debt-key"
         );
 
         when(
@@ -588,34 +667,91 @@ class SettlementServiceTest {
         ).save(
                 any(Settlement.class)
         );
+
+        verifyNoInteractions(
+                activityService
+        );
     }
 
     @Test
     void shouldReturnExistingSettlementForSameIdempotencyKey() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
-
-        User creditor = user(
-                1L,
-                "Sree"
-        );
-
-        ExpenseGroup group = group(
-                2L
-        );
-
-        Settlement existing =
-                settlement(
-                        10L,
-                        group,
-                        debtor,
-                        creditor,
-                        "300.00",
-                        SettlementMode.PARTIAL
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
                 );
+
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        Settlement existingSettlement =
+                mock(Settlement.class);
+
+        when(
+                existingSettlement
+                        .getGroup()
+        ).thenReturn(
+                group
+        );
+
+        when(
+                existingSettlement
+                        .getFromUser()
+        ).thenReturn(
+                debtor
+        );
+
+        when(
+                existingSettlement
+                        .getToUser()
+        ).thenReturn(
+                creditor
+        );
+
+        when(
+                existingSettlement
+                        .getAmount()
+        ).thenReturn(
+                new BigDecimal(
+                        "300.00"
+                )
+        );
+
+        when(
+                existingSettlement
+                        .getSettlementMode()
+        ).thenReturn(
+                SettlementMode.PARTIAL
+        );
+
+        when(
+                existingSettlement
+                        .getId()
+        ).thenReturn(
+                10L
+        );
+
+        when(
+                existingSettlement
+                        .getSettledAt()
+        ).thenReturn(
+                LocalDateTime.of(
+                        2026,
+                        9,
+                        15,
+                        0,
+                        30
+                )
+        );
 
         when(
                 userRepository
@@ -631,11 +767,11 @@ class SettlementServiceTest {
         when(
                 settlementRepository
                         .findByIdempotencyKey(
-                                "duplicate-key"
+                                "retry-key"
                         )
         ).thenReturn(
                 Optional.of(
-                        existing
+                        existingSettlement
                 )
         );
 
@@ -652,7 +788,7 @@ class SettlementServiceTest {
                 service.createSettlement(
                         2L,
                         "test@example.com",
-                        "duplicate-key",
+                        "retry-key",
                         request
                 );
 
@@ -675,6 +811,15 @@ class SettlementServiceTest {
 
         verifyNoInteractions(
                 debtSimplificationService
+        );
+
+        /*
+         * Very important M13 test:
+         * idempotent retry must NOT duplicate
+         * the activity/audit record.
+         */
+        verifyNoInteractions(
+                activityService
         );
     }
 
@@ -706,43 +851,33 @@ class SettlementServiceTest {
         );
 
         verifyNoInteractions(
-                userRepository,
-                debtSimplificationService
-        );
-
-        verify(
                 settlementRepository,
-                never()
-        ).save(
-                any(Settlement.class)
+                userRepository,
+                expenseGroupRepository,
+                groupMemberRepository,
+                debtSimplificationService,
+                activityService
         );
     }
 
     @Test
     void shouldReturnSettlementHistory() {
 
-        User debtor = user(
-                2L,
-                "Test User"
-        );
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
 
-        User creditor = user(
-                1L,
-                "Sree"
-        );
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        ExpenseGroup group = group(
-                2L
-        );
-
-        Settlement settlement =
-                settlement(
-                        10L,
-                        group,
-                        debtor,
-                        creditor,
-                        "300.00",
-                        SettlementMode.PARTIAL
+        ExpenseGroup group =
+                group(
+                        2L
                 );
 
         when(
@@ -775,6 +910,59 @@ class SettlementServiceTest {
                         )
         ).thenReturn(
                 true
+        );
+
+        Settlement settlement =
+                mock(Settlement.class);
+
+        when(
+                settlement.getId()
+        ).thenReturn(
+                10L
+        );
+
+        when(
+                settlement.getGroup()
+        ).thenReturn(
+                group
+        );
+
+        when(
+                settlement.getFromUser()
+        ).thenReturn(
+                debtor
+        );
+
+        when(
+                settlement.getToUser()
+        ).thenReturn(
+                creditor
+        );
+
+        when(
+                settlement.getAmount()
+        ).thenReturn(
+                new BigDecimal(
+                        "300.00"
+                )
+        );
+
+        when(
+                settlement.getSettlementMode()
+        ).thenReturn(
+                SettlementMode.PARTIAL
+        );
+
+        when(
+                settlement.getSettledAt()
+        ).thenReturn(
+                LocalDateTime.of(
+                        2026,
+                        9,
+                        15,
+                        0,
+                        30
+                )
         );
 
         when(
@@ -799,32 +987,48 @@ class SettlementServiceTest {
                 history.size()
         );
 
+        SettlementResponse response =
+                history.getFirst();
+
         assertEquals(
                 10L,
-                history.get(0).id()
+                response.id()
+        );
+
+        assertEquals(
+                2L,
+                response.groupId()
         );
 
         assertMoney(
                 "300.00",
-                history.get(0).amount()
+                response.amount()
         );
 
         assertEquals(
                 SettlementMode.PARTIAL,
-                history.get(0).mode()
+                response.mode()
+        );
+
+        verify(
+                settlementRepository
+        ).findByGroup_IdOrderBySettledAtDesc(
+                2L
         );
     }
 
     private void prepareValidGroup(
             User debtor,
             User creditor,
-            ExpenseGroup group
+            ExpenseGroup group,
+            String email,
+            String idempotencyKey
     ) {
 
         when(
                 userRepository
                         .findByEmail(
-                                "test@example.com"
+                                email
                         )
         ).thenReturn(
                 Optional.of(
@@ -835,7 +1039,7 @@ class SettlementServiceTest {
         when(
                 settlementRepository
                         .findByIdempotencyKey(
-                                anyString()
+                                idempotencyKey
                         )
         ).thenReturn(
                 Optional.empty()
@@ -856,7 +1060,7 @@ class SettlementServiceTest {
                 groupMemberRepository
                         .existsByGroupIdAndUserId(
                                 2L,
-                                2L
+                                debtor.getId()
                         )
         ).thenReturn(
                 true
@@ -865,7 +1069,7 @@ class SettlementServiceTest {
         when(
                 userRepository
                         .findById(
-                                1L
+                                creditor.getId()
                         )
         ).thenReturn(
                 Optional.of(
@@ -877,7 +1081,7 @@ class SettlementServiceTest {
                 groupMemberRepository
                         .existsByGroupIdAndUserId(
                                 2L,
-                                1L
+                                creditor.getId()
                         )
         ).thenReturn(
                 true
@@ -912,16 +1116,11 @@ class SettlementServiceTest {
     ) {
 
         User user =
-                mock(
-                        User.class
-                );
+                mock(User.class);
 
         /*
-         * These helper stubs are intentionally lenient.
-         *
-         * Some negative-path tests stop before getId()
-         * or getName() is used, while successful paths
-         * need both values.
+         * lenient because helper-created mocks are reused
+         * across tests and not every test reads every field.
          */
         lenient()
                 .when(
@@ -947,14 +1146,8 @@ class SettlementServiceTest {
     ) {
 
         ExpenseGroup group =
-                mock(
-                        ExpenseGroup.class
-                );
+                mock(ExpenseGroup.class);
 
-        /*
-         * Some validation tests fail before the group ID
-         * is required by the response mapper.
-         */
         lenient()
                 .when(
                         group.getId()
@@ -966,71 +1159,14 @@ class SettlementServiceTest {
         return group;
     }
 
-    private Settlement settlement(
-            Long id,
-            ExpenseGroup group,
-            User fromUser,
-            User toUser,
-            String amount,
-            SettlementMode mode
-    ) {
-
-        Settlement settlement =
-                mock(
-                        Settlement.class
-                );
-
-        when(
-                settlement.getId()
-        ).thenReturn(
-                id
-        );
-
-        when(
-                settlement.getGroup()
-        ).thenReturn(
-                group
-        );
-
-        when(
-                settlement.getFromUser()
-        ).thenReturn(
-                fromUser
-        );
-
-        when(
-                settlement.getToUser()
-        ).thenReturn(
-                toUser
-        );
-
-        when(
-                settlement.getAmount()
-        ).thenReturn(
-                new BigDecimal(
-                        amount
-                )
-        );
-
-        when(
-                settlement.getSettlementMode()
-        ).thenReturn(
-                mode
-        );
-
-        when(
-                settlement.getSettledAt()
-        ).thenReturn(
-                LocalDateTime.now()
-        );
-
-        return settlement;
-    }
-
     private void assertMoney(
             String expected,
             BigDecimal actual
     ) {
+
+        assertNotNull(
+                actual
+        );
 
         assertEquals(
                 0,

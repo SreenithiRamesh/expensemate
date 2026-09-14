@@ -9,6 +9,7 @@ import com.expensemate.dto.GroupUpdateRequest;
 import com.expensemate.entity.ExpenseGroup;
 import com.expensemate.entity.GroupMember;
 import com.expensemate.entity.User;
+import com.expensemate.enums.ActivityType;
 import com.expensemate.exception.ForbiddenOperationException;
 import com.expensemate.exception.InvalidRequestException;
 import com.expensemate.exception.ResourceNotFoundException;
@@ -27,14 +28,19 @@ public class GroupService {
     private final GroupMemberRepository groupMemberRepository;
     private final UserRepository userRepository;
 
+    // M13 — centralized activity/audit history
+    private final ActivityService activityService;
+
     public GroupService(
             ExpenseGroupRepository expenseGroupRepository,
             GroupMemberRepository groupMemberRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            ActivityService activityService
     ) {
         this.expenseGroupRepository = expenseGroupRepository;
         this.groupMemberRepository = groupMemberRepository;
         this.userRepository = userRepository;
+        this.activityService = activityService;
     }
 
     // ---------------------------------------------------------
@@ -47,25 +53,58 @@ public class GroupService {
             GroupCreateRequest request
     ) {
 
-        User creator = getUserByEmail(currentUserEmail);
+        User creator =
+                getUserByEmail(
+                        currentUserEmail
+                );
 
-        ExpenseGroup group = new ExpenseGroup(
-                request.getName().trim(),
-                normalizeDescription(request.getDescription()),
-                creator
-        );
+        ExpenseGroup group =
+                new ExpenseGroup(
+                        request.getName().trim(),
+                        normalizeDescription(
+                                request.getDescription()
+                        ),
+                        creator
+                );
 
         ExpenseGroup savedGroup =
-                expenseGroupRepository.save(group);
+                expenseGroupRepository.save(
+                        group
+                );
 
-        GroupMember creatorMembership = new GroupMember(
-                savedGroup,
-                creator
+        GroupMember creatorMembership =
+                new GroupMember(
+                        savedGroup,
+                        creator
+                );
+
+        groupMemberRepository.save(
+                creatorMembership
         );
 
-        groupMemberRepository.save(creatorMembership);
+        /*
+         * M13
+         *
+         * Record GROUP_CREATED only after:
+         * 1. the group has been persisted
+         * 2. creator membership has been persisted
+         *
+         * Everything is inside the same transaction.
+         */
+        activityService.record(
+                savedGroup,
+                creator,
+                ActivityType.GROUP_CREATED,
+                creator.getName()
+                        + " created group \""
+                        + savedGroup.getName()
+                        + "\"",
+                savedGroup.getId()
+        );
 
-        return toDetailsResponse(savedGroup);
+        return toDetailsResponse(
+                savedGroup
+        );
     }
 
     // ---------------------------------------------------------
@@ -77,16 +116,25 @@ public class GroupService {
             String currentUserEmail
     ) {
 
-        User currentUser = getUserByEmail(currentUserEmail);
-
-        List<GroupMember> memberships =
-                groupMemberRepository.findGroupsForUser(
-                        currentUser.getId()
+        User currentUser =
+                getUserByEmail(
+                        currentUserEmail
                 );
 
-        return memberships.stream()
-                .map(GroupMember::getGroup)
-                .map(this::toSummaryResponse)
+        List<GroupMember> memberships =
+                groupMemberRepository
+                        .findGroupsForUser(
+                                currentUser.getId()
+                        );
+
+        return memberships
+                .stream()
+                .map(
+                        GroupMember::getGroup
+                )
+                .map(
+                        this::toSummaryResponse
+                )
                 .toList();
     }
 
@@ -100,14 +148,20 @@ public class GroupService {
             String currentUserEmail
     ) {
 
-        User currentUser = getUserByEmail(currentUserEmail);
+        User currentUser =
+                getUserByEmail(
+                        currentUserEmail
+                );
 
-        ExpenseGroup group = getGroupForMember(
-                groupId,
-                currentUser.getId()
+        ExpenseGroup group =
+                getGroupForMember(
+                        groupId,
+                        currentUser.getId()
+                );
+
+        return toDetailsResponse(
+                group
         );
-
-        return toDetailsResponse(group);
     }
 
     // ---------------------------------------------------------
@@ -121,12 +175,16 @@ public class GroupService {
             GroupUpdateRequest request
     ) {
 
-        User currentUser = getUserByEmail(currentUserEmail);
+        User currentUser =
+                getUserByEmail(
+                        currentUserEmail
+                );
 
-        ExpenseGroup group = getGroupForMember(
-                groupId,
-                currentUser.getId()
-        );
+        ExpenseGroup group =
+                getGroupForMember(
+                        groupId,
+                        currentUser.getId()
+                );
 
         requireCreator(
                 group,
@@ -135,13 +193,31 @@ public class GroupService {
 
         group.updateDetails(
                 request.getName().trim(),
-                normalizeDescription(request.getDescription())
+                normalizeDescription(
+                        request.getDescription()
+                )
         );
 
         ExpenseGroup updatedGroup =
-                expenseGroupRepository.save(group);
+                expenseGroupRepository.save(
+                        group
+                );
 
-        return toDetailsResponse(updatedGroup);
+        /*
+         * M13 — group update audit entry.
+         */
+        activityService.record(
+                updatedGroup,
+                currentUser,
+                ActivityType.GROUP_UPDATED,
+                currentUser.getName()
+                        + " updated group details",
+                updatedGroup.getId()
+        );
+
+        return toDetailsResponse(
+                updatedGroup
+        );
     }
 
     // ---------------------------------------------------------
@@ -154,19 +230,36 @@ public class GroupService {
             String currentUserEmail
     ) {
 
-        User currentUser = getUserByEmail(currentUserEmail);
+        User currentUser =
+                getUserByEmail(
+                        currentUserEmail
+                );
 
-        ExpenseGroup group = getGroupForMember(
-                groupId,
-                currentUser.getId()
-        );
+        ExpenseGroup group =
+                getGroupForMember(
+                        groupId,
+                        currentUser.getId()
+                );
 
         requireCreator(
                 group,
                 currentUser.getId()
         );
 
-        expenseGroupRepository.delete(group);
+        /*
+         * No GROUP_DELETED activity is recorded in M13.
+         *
+         * group_activity has a foreign key to the group,
+         * so recording an activity and then deleting the
+         * group would either remove its usefulness or
+         * require a different audit-retention design.
+         *
+         * We leave deletion auditing for a future
+         * soft-delete/global-audit implementation.
+         */
+        expenseGroupRepository.delete(
+                group
+        );
     }
 
     // ---------------------------------------------------------
@@ -180,27 +273,36 @@ public class GroupService {
             GroupMemberAddRequest request
     ) {
 
-        User currentUser = getUserByEmail(currentUserEmail);
+        User currentUser =
+                getUserByEmail(
+                        currentUserEmail
+                );
 
-        ExpenseGroup group = getGroupForMember(
-                groupId,
-                currentUser.getId()
-        );
+        ExpenseGroup group =
+                getGroupForMember(
+                        groupId,
+                        currentUser.getId()
+                );
 
         requireCreator(
                 group,
                 currentUser.getId()
         );
 
-        String memberEmail = request.getEmail().trim();
+        String memberEmail =
+                request.getEmail().trim();
 
-        User memberToAdd = userRepository
-                .findByEmail(memberEmail)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "User not found"
+        User memberToAdd =
+                userRepository
+                        .findByEmail(
+                                memberEmail
                         )
-                );
+                        .orElseThrow(
+                                () ->
+                                        new ResourceNotFoundException(
+                                                "User not found"
+                                        )
+                        );
 
         boolean alreadyMember =
                 groupMemberRepository
@@ -210,20 +312,43 @@ public class GroupService {
                         );
 
         if (alreadyMember) {
+
             throw new InvalidRequestException(
                     "User is already a member of this group"
             );
         }
 
-        GroupMember groupMember = new GroupMember(
-                group,
-                memberToAdd
-        );
+        GroupMember groupMember =
+                new GroupMember(
+                        group,
+                        memberToAdd
+                );
 
         GroupMember savedMembership =
-                groupMemberRepository.save(groupMember);
+                groupMemberRepository.save(
+                        groupMember
+                );
 
-        return toMemberResponse(savedMembership);
+        /*
+         * M13 — member addition audit entry.
+         *
+         * referenceId represents the user who
+         * was added to the group.
+         */
+        activityService.record(
+                group,
+                currentUser,
+                ActivityType.MEMBER_ADDED,
+                currentUser.getName()
+                        + " added "
+                        + memberToAdd.getName()
+                        + " to the group",
+                memberToAdd.getId()
+        );
+
+        return toMemberResponse(
+                savedMembership
+        );
     }
 
     // ---------------------------------------------------------
@@ -237,21 +362,28 @@ public class GroupService {
             String currentUserEmail
     ) {
 
-        User currentUser = getUserByEmail(currentUserEmail);
+        User currentUser =
+                getUserByEmail(
+                        currentUserEmail
+                );
 
-        ExpenseGroup group = getGroupForMember(
-                groupId,
-                currentUser.getId()
-        );
+        ExpenseGroup group =
+                getGroupForMember(
+                        groupId,
+                        currentUser.getId()
+                );
 
         requireCreator(
                 group,
                 currentUser.getId()
         );
 
-        if (group.getCreatedBy()
+        if (group
+                .getCreatedBy()
                 .getId()
-                .equals(memberUserId)) {
+                .equals(
+                        memberUserId
+                )) {
 
             throw new InvalidRequestException(
                     "Group creator cannot be removed"
@@ -264,33 +396,67 @@ public class GroupService {
                                 groupId,
                                 memberUserId
                         )
-                        .orElseThrow(() ->
-                                new ResourceNotFoundException(
-                                        "Group member not found"
-                                )
+                        .orElseThrow(
+                                () ->
+                                        new ResourceNotFoundException(
+                                                "Group member not found"
+                                        )
                         );
 
-        groupMemberRepository.delete(membership);
+        /*
+         * Capture the user BEFORE deleting the membership.
+         * We need the user's name/id for the activity record.
+         */
+        User removedUser =
+                membership.getUser();
+
+        groupMemberRepository.delete(
+                membership
+        );
+
+        /*
+         * M13 — member removal audit entry.
+         *
+         * This is recorded after the membership deletion,
+         * but inside the same transaction.
+         */
+        activityService.record(
+                group,
+                currentUser,
+                ActivityType.MEMBER_REMOVED,
+                currentUser.getName()
+                        + " removed "
+                        + removedUser.getName()
+                        + " from the group",
+                removedUser.getId()
+        );
     }
 
     // ---------------------------------------------------------
     // USER HELPER
     // ---------------------------------------------------------
 
-    private User getUserByEmail(String email) {
+    private User getUserByEmail(
+            String email
+    ) {
 
-        if (email == null || email.isBlank()) {
+        if (email == null
+                || email.isBlank()) {
+
             throw new ResourceNotFoundException(
                     "User not found"
             );
         }
 
         return userRepository
-                .findByEmail(email)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "User not found"
-                        )
+                .findByEmail(
+                        email
+                )
+                .orElseThrow(
+                        () ->
+                                new ResourceNotFoundException(
+                                        "User not found"
+                                )
                 );
     }
 
@@ -298,14 +464,19 @@ public class GroupService {
     // GROUP HELPER
     // ---------------------------------------------------------
 
-    private ExpenseGroup getGroupById(Long groupId) {
+    private ExpenseGroup getGroupById(
+            Long groupId
+    ) {
 
         return expenseGroupRepository
-                .findById(groupId)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Group not found"
-                        )
+                .findById(
+                        groupId
+                )
+                .orElseThrow(
+                        () ->
+                                new ResourceNotFoundException(
+                                        "Group not found"
+                                )
                 );
     }
 
@@ -318,7 +489,10 @@ public class GroupService {
             Long userId
     ) {
 
-        ExpenseGroup group = getGroupById(groupId);
+        ExpenseGroup group =
+                getGroupById(
+                        groupId
+                );
 
         boolean isMember =
                 groupMemberRepository
@@ -328,6 +502,7 @@ public class GroupService {
                         );
 
         if (!isMember) {
+
             throw new ResourceNotFoundException(
                     "Group not found"
             );
@@ -345,9 +520,12 @@ public class GroupService {
             Long currentUserId
     ) {
 
-        if (!group.getCreatedBy()
+        if (!group
+                .getCreatedBy()
                 .getId()
-                .equals(currentUserId)) {
+                .equals(
+                        currentUserId
+                )) {
 
             throw new ForbiddenOperationException(
                     "Only the group creator can perform this action"
@@ -364,9 +542,10 @@ public class GroupService {
     ) {
 
         long memberCount =
-                groupMemberRepository.countByGroupId(
-                        group.getId()
-                );
+                groupMemberRepository
+                        .countByGroupId(
+                                group.getId()
+                        );
 
         return new GroupSummaryResponse(
                 group.getId(),
@@ -394,10 +573,13 @@ public class GroupService {
                                 group.getId()
                         )
                         .stream()
-                        .map(this::toMemberResponse)
+                        .map(
+                                this::toMemberResponse
+                        )
                         .toList();
 
-        User creator = group.getCreatedBy();
+        User creator =
+                group.getCreatedBy();
 
         return new GroupDetailsResponse(
                 group.getId(),
@@ -420,7 +602,8 @@ public class GroupService {
             GroupMember membership
     ) {
 
-        User user = membership.getUser();
+        User user =
+                membership.getUser();
 
         return new GroupMemberResponse(
                 user.getId(),

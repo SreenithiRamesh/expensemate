@@ -8,6 +8,7 @@ import com.expensemate.entity.ExpenseSplit;
 import com.expensemate.entity.GroupMember;
 import com.expensemate.entity.SharedExpense;
 import com.expensemate.entity.User;
+import com.expensemate.enums.ActivityType;
 import com.expensemate.enums.SplitType;
 import com.expensemate.exception.InvalidRequestException;
 import com.expensemate.exception.ResourceNotFoundException;
@@ -36,7 +37,7 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-public class SharedExpenseServiceTest {
+class SharedExpenseServiceTest {
 
     @Mock
     private SharedExpenseRepository sharedExpenseRepository;
@@ -59,280 +60,256 @@ public class SharedExpenseServiceTest {
     @Mock
     private SplitStrategy splitStrategy;
 
-    private SharedExpenseService sharedExpenseService;
+    @Mock
+    private ActivityService activityService;
 
-    private User currentUser;
-    private User payer;
-    private User secondMember;
-    private ExpenseGroup group;
-    private GroupMember payerMembership;
-    private GroupMember secondMemberMembership;
+    private SharedExpenseService sharedExpenseService;
 
     @BeforeEach
     void setUp() {
 
-        sharedExpenseService = new SharedExpenseService(
-                sharedExpenseRepository,
-                expenseSplitRepository,
-                expenseGroupRepository,
-                groupMemberRepository,
-                userRepository,
+        sharedExpenseService =
+                new SharedExpenseService(
+                        sharedExpenseRepository,
+                        expenseSplitRepository,
+                        expenseGroupRepository,
+                        groupMemberRepository,
+                        userRepository,
+                        splitStrategyResolver,
+                        activityService
+                );
+    }
+
+    @Test
+    void shouldCreateEqualSharedExpenseSuccessfully() {
+
+        User currentUser =
+                user(
+                        1L,
+                        "Sree",
+                        "sree@example.com"
+                );
+
+        User secondUser =
+                user(
+                        2L,
+                        "Test User",
+                        "testuser@example.com"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        GroupMember currentUserMembership =
+                membership(
+                        currentUser
+                );
+
+        GroupMember secondUserMembership =
+                membership(
+                        secondUser
+                );
+
+        SplitInputRequest splitOne =
+                splitRequest(
+                        1L
+                );
+
+        SplitInputRequest splitTwo =
+                splitRequest(
+                        2L
+                );
+
+        /*
+         * Store the list separately.
+         *
+         * This avoids calling request.getSplits()
+         * inside Mockito eq(...), which caused the
+         * InvalidUseOfMatchersException.
+         */
+        List<SplitInputRequest> splits =
+                List.of(
+                        splitOne,
+                        splitTwo
+                );
+
+        SharedExpenseCreateRequest request =
+                request(
+                        "Dinner",
+                        "100.00",
+                        1L,
+                        SplitType.EQUAL,
+                        splits
+                );
+
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
+
+        when(
+                expenseGroupRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        /*
+         * User 1 is both the payer
+         * and one of the split participants.
+         */
+        when(
+                groupMemberRepository
+                        .findByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUserMembership
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .findByGroupIdAndUserId(
+                                2L,
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        secondUserMembership
+                )
+        );
+
+        when(
                 splitStrategyResolver
-        );
-
-        currentUser = mock(User.class);
-        payer = mock(User.class);
-        secondMember = mock(User.class);
-
-        group = mock(ExpenseGroup.class);
-
-        payerMembership = mock(GroupMember.class);
-        secondMemberMembership = mock(GroupMember.class);
-    }
-
-    @Test
-    void shouldRejectNonMemberCreatingSharedExpense() {
-
-        SharedExpenseCreateRequest request = createEqualRequest();
-
-        when(currentUser.getId()).thenReturn(1L);
-
-        when(userRepository.findByEmail("sree@example.com"))
-                .thenReturn(Optional.of(currentUser));
-
-        when(expenseGroupRepository.findById(10L))
-                .thenReturn(Optional.of(group));
-
-        when(groupMemberRepository
-                .existsByGroupIdAndUserId(10L, 1L))
-                .thenReturn(false);
-
-        ResourceNotFoundException exception =
-                assertThrows(
-                        ResourceNotFoundException.class,
-                        () -> sharedExpenseService.createSharedExpense(
-                                10L,
-                                "sree@example.com",
-                                request
+                        .resolve(
+                                SplitType.EQUAL
                         )
-                );
-
-        assertEquals(
-                "Group not found",
-                exception.getMessage()
+        ).thenReturn(
+                splitStrategy
         );
 
-        verify(sharedExpenseRepository, never())
-                .save(any());
-    }
-
-    @Test
-    void shouldRejectPayerWhoIsNotGroupMember() {
-
-        SharedExpenseCreateRequest request = createEqualRequest();
-
-        mockCurrentUserAsGroupMember();
-
-        when(groupMemberRepository
-                .findByGroupIdAndUserId(10L, 2L))
-                .thenReturn(Optional.empty());
-
-        InvalidRequestException exception =
-                assertThrows(
-                        InvalidRequestException.class,
-                        () -> sharedExpenseService.createSharedExpense(
-                                10L,
-                                "sree@example.com",
-                                request
+        when(
+                splitStrategy.calculate(
+                        eq(
+                                new BigDecimal(
+                                        "100.00"
+                                )
+                        ),
+                        eq(
+                                splits
                         )
-                );
-
-        assertEquals(
-                "Payer must be a member of this group",
-                exception.getMessage()
-        );
-
-        verify(sharedExpenseRepository, never())
-                .save(any());
-    }
-
-    @Test
-    void shouldRejectSplitParticipantWhoIsNotGroupMember() {
-
-        SharedExpenseCreateRequest request = createEqualRequest();
-
-        mockCurrentUserAsGroupMember();
-
-        when(payerMembership.getUser())
-                .thenReturn(payer);
-
-        when(groupMemberRepository
-                .findByGroupIdAndUserId(10L, 2L))
-                .thenReturn(Optional.of(payerMembership));
-
-        when(groupMemberRepository
-                .findByGroupIdAndUserId(10L, 3L))
-                .thenReturn(Optional.empty());
-
-        InvalidRequestException exception =
-                assertThrows(
-                        InvalidRequestException.class,
-                        () -> sharedExpenseService.createSharedExpense(
-                                10L,
-                                "sree@example.com",
-                                request
-                        )
-                );
-
-        assertEquals(
-                "All split participants must be members of this group",
-                exception.getMessage()
-        );
-
-        verify(sharedExpenseRepository, never())
-                .save(any());
-    }
-
-    @Test
-    void shouldRejectDuplicateSplitMembers() {
-
-        SharedExpenseCreateRequest request =
-                createDuplicateSplitRequest();
-
-        mockCurrentUserAsGroupMember();
-
-        InvalidRequestException exception =
-                assertThrows(
-                        InvalidRequestException.class,
-                        () -> sharedExpenseService.createSharedExpense(
-                                10L,
-                                "sree@example.com",
-                                request
-                        )
-                );
-
-        assertEquals(
-                "Duplicate split members are not allowed",
-                exception.getMessage()
-        );
-
-        verify(splitStrategyResolver, never())
-                .resolve(any());
-
-        verify(sharedExpenseRepository, never())
-                .save(any());
-    }
-
-    @Test
-    void shouldUseCorrectStrategyAndPersistSharedExpenseWithSplits() {
-
-        SharedExpenseCreateRequest request =
-                createEqualRequest();
-
-        mockCurrentUserAsGroupMember();
-
-        when(payer.getId()).thenReturn(2L);
-        when(payer.getName()).thenReturn("Test User");
-
-        when(secondMember.getId()).thenReturn(3L);
-        when(secondMember.getName()).thenReturn("Second Member");
-        when(secondMember.getEmail()).thenReturn("second@example.com");
-
-        when(payerMembership.getUser())
-                .thenReturn(payer);
-
-        when(secondMemberMembership.getUser())
-                .thenReturn(secondMember);
-
-        when(group.getId()).thenReturn(10L);
-
-        when(groupMemberRepository
-                .findByGroupIdAndUserId(10L, 2L))
-                .thenReturn(Optional.of(payerMembership));
-
-        when(groupMemberRepository
-                .findByGroupIdAndUserId(10L, 3L))
-                .thenReturn(Optional.of(secondMemberMembership));
-
-        when(splitStrategyResolver.resolve(SplitType.EQUAL))
-                .thenReturn(splitStrategy);
-
-        List<SplitResult> calculatedSplits =
+                )
+        ).thenReturn(
                 List.of(
                         new SplitResult(
-                                2L,
-                                new BigDecimal("50.00"),
+                                1L,
+                                new BigDecimal(
+                                        "50.00"
+                                ),
                                 null
                         ),
                         new SplitResult(
-                                3L,
-                                new BigDecimal("50.00"),
+                                2L,
+                                new BigDecimal(
+                                        "50.00"
+                                ),
                                 null
                         )
-                );
+                )
+        );
 
-        when(splitStrategy.calculate(
-                eq(new BigDecimal("100.00")),
-                anyList()
-        )).thenReturn(calculatedSplits);
+        when(
+                sharedExpenseRepository
+                        .save(
+                                any(
+                                        SharedExpense.class
+                                )
+                        )
+        ).thenAnswer(
+                invocation ->
+                        invocation.getArgument(
+                                0
+                        )
+        );
 
-        when(sharedExpenseRepository
-                .save(any(SharedExpense.class)))
-                .thenAnswer(invocation ->
-                        invocation.getArgument(0)
-                );
+        when(
+                userRepository
+                        .findById(
+                                1L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
 
-        when(userRepository.findById(2L))
-                .thenReturn(Optional.of(payer));
+        when(
+                userRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        secondUser
+                )
+        );
 
-        when(userRepository.findById(3L))
-                .thenReturn(Optional.of(secondMember));
+        when(
+                expenseSplitRepository
+                        .saveAll(
+                                anyList()
+                        )
+        ).thenAnswer(
+                invocation ->
+                        invocation.getArgument(
+                                0
+                        )
+        );
 
         SharedExpenseResponse response =
-                sharedExpenseService.createSharedExpense(
-                        10L,
-                        "sree@example.com",
-                        request
-                );
+                sharedExpenseService
+                        .createSharedExpense(
+                                2L,
+                                "sree@example.com",
+                                request
+                        );
 
-        verify(splitStrategyResolver)
-                .resolve(SplitType.EQUAL);
-
-        verify(splitStrategy)
-                .calculate(
-                        new BigDecimal("100.00"),
-                        request.getSplits()
-                );
-
-        verify(sharedExpenseRepository)
-                .save(any(SharedExpense.class));
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<ExpenseSplit>> splitCaptor =
-                ArgumentCaptor.forClass(List.class);
-
-        verify(expenseSplitRepository)
-                .saveAll(splitCaptor.capture());
-
-        List<ExpenseSplit> savedSplits =
-                splitCaptor.getValue();
-
-        assertEquals(2, savedSplits.size());
-
-        assertEquals(
-                new BigDecimal("50.00"),
-                savedSplits.get(0).getShareAmount()
+        assertNotNull(
+                response
         );
 
         assertEquals(
-                new BigDecimal("50.00"),
-                savedSplits.get(1).getShareAmount()
+                "Dinner",
+                response.getTitle()
         );
 
-        assertNotNull(response);
-
-        assertEquals(
-                new BigDecimal("100.00"),
+        assertMoney(
+                "100.00",
                 response.getAmount()
         );
 
@@ -345,46 +322,679 @@ public class SharedExpenseServiceTest {
                 2,
                 response.getSplits().size()
         );
+
+        /*
+         * Strategy resolver must select
+         * the EQUAL strategy.
+         */
+        verify(
+                splitStrategyResolver
+        ).resolve(
+                SplitType.EQUAL
+        );
+
+        /*
+         * Corrected Mockito verification:
+         * both arguments are matchers and
+         * no mock getter is called inside eq(...).
+         */
+        verify(
+                splitStrategy
+        ).calculate(
+                eq(
+                        new BigDecimal(
+                                "100.00"
+                        )
+                ),
+                eq(
+                        splits
+                )
+        );
+
+        verify(
+                sharedExpenseRepository
+        ).save(
+                any(
+                        SharedExpense.class
+                )
+        );
+
+        /*
+         * Capture the saved ExpenseSplit list
+         * and verify that the strategy output
+         * was persisted correctly.
+         */
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ExpenseSplit>> splitCaptor =
+                ArgumentCaptor.forClass(
+                        List.class
+                );
+
+        verify(
+                expenseSplitRepository
+        ).saveAll(
+                splitCaptor.capture()
+        );
+
+        List<ExpenseSplit> savedSplits =
+                splitCaptor.getValue();
+
+        assertEquals(
+                2,
+                savedSplits.size()
+        );
+
+        assertMoney(
+                "50.00",
+                savedSplits
+                        .get(0)
+                        .getShareAmount()
+        );
+
+        assertMoney(
+                "50.00",
+                savedSplits
+                        .get(1)
+                        .getShareAmount()
+        );
+
+        /*
+         * M13:
+         * successful shared expense creation
+         * must create an activity record.
+         *
+         * savedExpense.getId() is null here because
+         * repository.save() is mocked and no real DB
+         * generates the ID.
+         */
+        verify(
+                activityService
+        ).record(
+                eq(
+                        group
+                ),
+                eq(
+                        currentUser
+                ),
+                eq(
+                        ActivityType.SHARED_EXPENSE_CREATED
+                ),
+                contains(
+                        "Dinner"
+                ),
+                isNull()
+        );
     }
 
     @Test
-    void shouldRejectCalculatedSplitsWhenTotalDoesNotMatchExpenseAmount() {
+    void shouldRejectDuplicateSplitMembers() {
+
+        User currentUser =
+                user(
+                        1L,
+                        "Sree",
+                        "sree@example.com"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        SplitInputRequest splitOne =
+                splitRequest(
+                        1L
+                );
+
+        SplitInputRequest duplicateSplit =
+                splitRequest(
+                        1L
+                );
+
+        List<SplitInputRequest> splits =
+                List.of(
+                        splitOne,
+                        duplicateSplit
+                );
 
         SharedExpenseCreateRequest request =
-                createEqualRequest();
+                request(
+                        "Dinner",
+                        "100.00",
+                        1L,
+                        SplitType.EQUAL,
+                        splits
+                );
 
-        mockCurrentUserAsGroupMember();
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
 
-        when(payerMembership.getUser())
-                .thenReturn(payer);
+        when(
+                expenseGroupRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
 
-        when(secondMemberMembership.getUser())
-                .thenReturn(secondMember);
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
 
-        when(groupMemberRepository
-                .findByGroupIdAndUserId(10L, 2L))
-                .thenReturn(Optional.of(payerMembership));
+        InvalidRequestException exception =
+                assertThrows(
+                        InvalidRequestException.class,
+                        () ->
+                                sharedExpenseService
+                                        .createSharedExpense(
+                                                2L,
+                                                "sree@example.com",
+                                                request
+                                        )
+                );
 
-        when(groupMemberRepository
-                .findByGroupIdAndUserId(10L, 3L))
-                .thenReturn(Optional.of(secondMemberMembership));
+        assertEquals(
+                "Duplicate split members are not allowed",
+                exception.getMessage()
+        );
 
-        when(splitStrategyResolver.resolve(SplitType.EQUAL))
-                .thenReturn(splitStrategy);
+        verify(
+                splitStrategyResolver,
+                never()
+        ).resolve(
+                any()
+        );
 
-        when(splitStrategy.calculate(
-                eq(new BigDecimal("100.00")),
-                anyList()
-        )).thenReturn(
+        verify(
+                sharedExpenseRepository,
+                never()
+        ).save(
+                any()
+        );
+
+        verifyNoInteractions(
+                activityService
+        );
+    }
+
+    @Test
+    void shouldRejectRequesterWhoIsNotGroupMember() {
+
+        User currentUser =
+                user(
+                        1L,
+                        "Sree",
+                        "sree@example.com"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        SharedExpenseCreateRequest request =
+                request(
+                        "Dinner",
+                        "100.00",
+                        1L,
+                        SplitType.EQUAL,
+                        List.of(
+                                splitRequest(
+                                        1L
+                                )
+                        )
+                );
+
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
+
+        when(
+                expenseGroupRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                false
+        );
+
+        ResourceNotFoundException exception =
+                assertThrows(
+                        ResourceNotFoundException.class,
+                        () ->
+                                sharedExpenseService
+                                        .createSharedExpense(
+                                                2L,
+                                                "sree@example.com",
+                                                request
+                                        )
+                );
+
+        assertEquals(
+                "Group not found",
+                exception.getMessage()
+        );
+
+        verify(
+                sharedExpenseRepository,
+                never()
+        ).save(
+                any()
+        );
+
+        verifyNoInteractions(
+                activityService
+        );
+    }
+
+    @Test
+    void shouldRejectPayerWhoIsNotGroupMember() {
+
+        User currentUser =
+                user(
+                        1L,
+                        "Sree",
+                        "sree@example.com"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        SharedExpenseCreateRequest request =
+                request(
+                        "Dinner",
+                        "100.00",
+                        99L,
+                        SplitType.EQUAL,
+                        List.of(
+                                splitRequest(
+                                        1L
+                                )
+                        )
+                );
+
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
+
+        when(
+                expenseGroupRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        when(
+                groupMemberRepository
+                        .findByGroupIdAndUserId(
+                                2L,
+                                99L
+                        )
+        ).thenReturn(
+                Optional.empty()
+        );
+
+        InvalidRequestException exception =
+                assertThrows(
+                        InvalidRequestException.class,
+                        () ->
+                                sharedExpenseService
+                                        .createSharedExpense(
+                                                2L,
+                                                "sree@example.com",
+                                                request
+                                        )
+                );
+
+        assertEquals(
+                "Payer must be a member of this group",
+                exception.getMessage()
+        );
+
+        verify(
+                sharedExpenseRepository,
+                never()
+        ).save(
+                any()
+        );
+
+        verifyNoInteractions(
+                activityService
+        );
+    }
+
+    @Test
+    void shouldRejectSplitParticipantWhoIsNotGroupMember() {
+
+        User currentUser =
+                user(
+                        1L,
+                        "Sree",
+                        "sree@example.com"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        GroupMember currentUserMembership =
+                membership(
+                        currentUser
+                );
+
+        List<SplitInputRequest> splits =
+                List.of(
+                        splitRequest(
+                                1L
+                        ),
+                        splitRequest(
+                                99L
+                        )
+                );
+
+        SharedExpenseCreateRequest request =
+                request(
+                        "Dinner",
+                        "100.00",
+                        1L,
+                        SplitType.EQUAL,
+                        splits
+                );
+
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
+
+        when(
+                expenseGroupRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        when(
+                groupMemberRepository
+                        .findByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUserMembership
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .findByGroupIdAndUserId(
+                                2L,
+                                99L
+                        )
+        ).thenReturn(
+                Optional.empty()
+        );
+
+        InvalidRequestException exception =
+                assertThrows(
+                        InvalidRequestException.class,
+                        () ->
+                                sharedExpenseService
+                                        .createSharedExpense(
+                                                2L,
+                                                "sree@example.com",
+                                                request
+                                        )
+                );
+
+        assertEquals(
+                "All split participants must be members of this group",
+                exception.getMessage()
+        );
+
+        verify(
+                sharedExpenseRepository,
+                never()
+        ).save(
+                any()
+        );
+
+        verifyNoInteractions(
+                activityService
+        );
+    }
+
+    @Test
+    void shouldRejectCalculatedSplitTotalMismatch() {
+
+        User currentUser =
+                user(
+                        1L,
+                        "Sree",
+                        "sree@example.com"
+                );
+
+        User secondUser =
+                user(
+                        2L,
+                        "Test User",
+                        "testuser@example.com"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        GroupMember currentUserMembership =
+                membership(
+                        currentUser
+                );
+
+        GroupMember secondUserMembership =
+                membership(
+                        secondUser
+                );
+
+        SplitInputRequest splitOne =
+                splitRequest(
+                        1L
+                );
+
+        SplitInputRequest splitTwo =
+                splitRequest(
+                        2L
+                );
+
+        List<SplitInputRequest> splits =
+                List.of(
+                        splitOne,
+                        splitTwo
+                );
+
+        SharedExpenseCreateRequest request =
+                request(
+                        "Dinner",
+                        "100.00",
+                        1L,
+                        SplitType.EQUAL,
+                        splits
+                );
+
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
+
+        when(
+                expenseGroupRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        when(
+                groupMemberRepository
+                        .findByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        currentUserMembership
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .findByGroupIdAndUserId(
+                                2L,
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        secondUserMembership
+                )
+        );
+
+        when(
+                splitStrategyResolver
+                        .resolve(
+                                SplitType.EQUAL
+                        )
+        ).thenReturn(
+                splitStrategy
+        );
+
+        /*
+         * Wrong total deliberately:
+         * 40 + 40 = 80, but expense = 100.
+         */
+        when(
+                splitStrategy.calculate(
+                        eq(
+                                new BigDecimal(
+                                        "100.00"
+                                )
+                        ),
+                        eq(
+                                splits
+                        )
+                )
+        ).thenReturn(
                 List.of(
                         new SplitResult(
-                                2L,
-                                new BigDecimal("40.00"),
+                                1L,
+                                new BigDecimal(
+                                        "40.00"
+                                ),
                                 null
                         ),
                         new SplitResult(
-                                3L,
-                                new BigDecimal("40.00"),
+                                2L,
+                                new BigDecimal(
+                                        "40.00"
+                                ),
                                 null
                         )
                 )
@@ -393,11 +1003,13 @@ public class SharedExpenseServiceTest {
         InvalidRequestException exception =
                 assertThrows(
                         InvalidRequestException.class,
-                        () -> sharedExpenseService.createSharedExpense(
-                                10L,
-                                "sree@example.com",
-                                request
-                        )
+                        () ->
+                                sharedExpenseService
+                                        .createSharedExpense(
+                                                2L,
+                                                "sree@example.com",
+                                                request
+                                        )
                 );
 
         assertEquals(
@@ -405,98 +1017,209 @@ public class SharedExpenseServiceTest {
                 exception.getMessage()
         );
 
-        verify(sharedExpenseRepository, never())
-                .save(any());
+        verify(
+                sharedExpenseRepository,
+                never()
+        ).save(
+                any()
+        );
+
+        verify(
+                expenseSplitRepository,
+                never()
+        ).saveAll(
+                anyList()
+        );
+
+        verifyNoInteractions(
+                activityService
+        );
     }
 
-    private void mockCurrentUserAsGroupMember() {
-
-        when(currentUser.getId()).thenReturn(1L);
-
-        when(userRepository.findByEmail("sree@example.com"))
-                .thenReturn(Optional.of(currentUser));
-
-        when(expenseGroupRepository.findById(10L))
-                .thenReturn(Optional.of(group));
-
-        when(groupMemberRepository
-                .existsByGroupIdAndUserId(10L, 1L))
-                .thenReturn(true);
-    }
-
-    private SharedExpenseCreateRequest createEqualRequest() {
-
-        SharedExpenseCreateRequest request =
-                new SharedExpenseCreateRequest();
-
-        request.setTitle("Dinner");
-
-        request.setAmount(
-                new BigDecimal("100.00")
-        );
-
-        request.setPaidByUserId(2L);
-
-        request.setSplitType(
-                SplitType.EQUAL
-        );
-
-        request.setExpenseDate(
-                LocalDate.of(2026, 9, 14)
-        );
-
-        request.setSplits(
-                List.of(
-                        split(2L, null),
-                        split(3L, null)
-                )
-        );
-
-        return request;
-    }
-
-    private SharedExpenseCreateRequest createDuplicateSplitRequest() {
-
-        SharedExpenseCreateRequest request =
-                new SharedExpenseCreateRequest();
-
-        request.setTitle("Dinner");
-
-        request.setAmount(
-                new BigDecimal("100.00")
-        );
-
-        request.setPaidByUserId(2L);
-
-        request.setSplitType(
-                SplitType.EQUAL
-        );
-
-        request.setExpenseDate(
-                LocalDate.of(2026, 9, 14)
-        );
-
-        request.setSplits(
-                List.of(
-                        split(2L, null),
-                        split(2L, null)
-                )
-        );
-
-        return request;
-    }
-
-    private SplitInputRequest split(
-            Long userId,
-            BigDecimal value
+    private SharedExpenseCreateRequest request(
+            String title,
+            String amount,
+            Long paidByUserId,
+            SplitType splitType,
+            List<SplitInputRequest> splits
     ) {
 
-        SplitInputRequest split =
-                new SplitInputRequest();
+        SharedExpenseCreateRequest request =
+                mock(
+                        SharedExpenseCreateRequest.class
+                );
 
-        split.setUserId(userId);
-        split.setValue(value);
+        lenient()
+                .when(
+                        request.getTitle()
+                )
+                .thenReturn(
+                        title
+                );
 
-        return split;
+        lenient()
+                .when(
+                        request.getAmount()
+                )
+                .thenReturn(
+                        new BigDecimal(
+                                amount
+                        )
+                );
+
+        lenient()
+                .when(
+                        request.getPaidByUserId()
+                )
+                .thenReturn(
+                        paidByUserId
+                );
+
+        lenient()
+                .when(
+                        request.getSplitType()
+                )
+                .thenReturn(
+                        splitType
+                );
+
+        lenient()
+                .when(
+                        request.getExpenseDate()
+                )
+                .thenReturn(
+                        LocalDate.of(
+                                2026,
+                                9,
+                                15
+                        )
+                );
+
+        lenient()
+                .when(
+                        request.getSplits()
+                )
+                .thenReturn(
+                        splits
+                );
+
+        return request;
+    }
+
+    private SplitInputRequest splitRequest(
+            Long userId
+    ) {
+
+        SplitInputRequest request =
+                mock(
+                        SplitInputRequest.class
+                );
+
+        lenient()
+                .when(
+                        request.getUserId()
+                )
+                .thenReturn(
+                        userId
+                );
+
+        return request;
+    }
+
+    private User user(
+            Long id,
+            String name,
+            String email
+    ) {
+
+        User user =
+                mock(
+                        User.class
+                );
+
+        lenient()
+                .when(
+                        user.getId()
+                )
+                .thenReturn(
+                        id
+                );
+
+        lenient()
+                .when(
+                        user.getName()
+                )
+                .thenReturn(
+                        name
+                );
+
+        lenient()
+                .when(
+                        user.getEmail()
+                )
+                .thenReturn(
+                        email
+                );
+
+        return user;
+    }
+
+    private ExpenseGroup group(
+            Long id
+    ) {
+
+        ExpenseGroup group =
+                mock(
+                        ExpenseGroup.class
+                );
+
+        lenient()
+                .when(
+                        group.getId()
+                )
+                .thenReturn(
+                        id
+                );
+
+        return group;
+    }
+
+    private GroupMember membership(
+            User user
+    ) {
+
+        GroupMember membership =
+                mock(
+                        GroupMember.class
+                );
+
+        lenient()
+                .when(
+                        membership.getUser()
+                )
+                .thenReturn(
+                        user
+                );
+
+        return membership;
+    }
+
+    private void assertMoney(
+            String expected,
+            BigDecimal actual
+    ) {
+
+        assertNotNull(
+                actual
+        );
+
+        assertEquals(
+                0,
+                new BigDecimal(
+                        expected
+                ).compareTo(
+                        actual
+                )
+        );
     }
 }
