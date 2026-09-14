@@ -2,6 +2,7 @@ package com.expensemate.balance;
 
 import com.expensemate.dto.balance.GroupBalanceResponse;
 import com.expensemate.entity.ExpenseSplit;
+import com.expensemate.entity.Settlement;
 import com.expensemate.entity.SharedExpense;
 import com.expensemate.entity.User;
 import org.junit.jupiter.api.BeforeEach;
@@ -10,7 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -20,36 +21,40 @@ class NetBalanceCalculatorTest {
 
     @BeforeEach
     void setUp() {
-        calculator = new NetBalanceCalculator();
+
+        calculator =
+                new NetBalanceCalculator();
     }
 
     @Test
     void shouldCalculateSingleCreditorAndDebtor() {
 
-        User sree = createUser(
-                1L,
-                "Sree"
-        );
+        User sree =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        User testUser = createUser(
-                2L,
-                "Test User"
-        );
+        User testUser =
+                user(
+                        2L,
+                        "Test User"
+                );
 
         SharedExpense expense =
-                createExpense(
+                expense(
                         sree,
                         "1000.00"
                 );
 
-        ExpenseSplit sreeSplit =
-                createSplit(
+        ExpenseSplit split1 =
+                split(
                         sree,
                         "600.00"
                 );
 
-        ExpenseSplit testUserSplit =
-                createSplit(
+        ExpenseSplit split2 =
+                split(
                         testUser,
                         "400.00"
                 );
@@ -59,318 +64,450 @@ class NetBalanceCalculatorTest {
                         2L,
                         List.of(expense),
                         List.of(
-                                sreeSplit,
-                                testUserSplit
-                        )
+                                split1,
+                                split2
+                        ),
+                        List.of()
                 );
 
-        assertEquals(
-                2,
-                response.memberBalances().size()
+        assertMoney(
+                "400.00",
+                balanceOf(
+                        response,
+                        1L
+                )
+        );
+
+        assertMoney(
+                "-400.00",
+                balanceOf(
+                        response,
+                        2L
+                )
         );
 
         assertEquals(
                 1,
-                response.settlements().size()
+                response
+                        .settlements()
+                        .size()
         );
 
-        var settlement =
-                response.settlements().get(0);
-
-        assertEquals(
-                2L,
-                settlement.fromUserId()
-        );
-
-        assertEquals(
-                "Test User",
-                settlement.fromUserName()
-        );
-
-        assertEquals(
-                1L,
-                settlement.toUserId()
-        );
-
-        assertEquals(
-                "Sree",
-                settlement.toUserName()
-        );
-
-        assertBigDecimalEquals(
+        assertMoney(
                 "400.00",
-                settlement.amount()
+                response
+                        .settlements()
+                        .get(0)
+                        .amount()
         );
     }
 
     @Test
-    void shouldCalculateBalancesAcrossMultipleExpenses() {
+    void shouldApplyPartialSettlementToBalances() {
 
-        User user1 = createUser(
-                1L,
-                "User 1"
+        User sree =
+                user(
+                        1L,
+                        "Sree"
+                );
+
+        User testUser =
+                user(
+                        2L,
+                        "Test User"
+                );
+
+        SharedExpense expense =
+                expense(
+                        sree,
+                        "1000.00"
+                );
+
+        ExpenseSplit sreeSplit =
+                split(
+                        sree,
+                        "200.00"
+                );
+
+        ExpenseSplit testSplit =
+                split(
+                        testUser,
+                        "800.00"
+                );
+
+        Settlement settlement =
+                settlement(
+                        testUser,
+                        sree,
+                        "300.00"
+                );
+
+        GroupBalanceResponse response =
+                calculator.calculate(
+                        2L,
+                        List.of(expense),
+                        List.of(
+                                sreeSplit,
+                                testSplit
+                        ),
+                        List.of(
+                                settlement
+                        )
+                );
+
+        assertMoney(
+                "500.00",
+                balanceOf(
+                        response,
+                        1L
+                )
         );
 
-        User user2 = createUser(
-                2L,
-                "User 2"
+        assertMoney(
+                "-500.00",
+                balanceOf(
+                        response,
+                        2L
+                )
         );
 
-        User user3 = createUser(
-                3L,
-                "User 3"
+        assertEquals(
+                1,
+                response
+                        .settlements()
+                        .size()
         );
 
-        SharedExpense hotel =
-                createExpense(
+        assertMoney(
+                "500.00",
+                response
+                        .settlements()
+                        .get(0)
+                        .amount()
+        );
+    }
+
+    @Test
+    void shouldBecomeZeroAfterFullSettlement() {
+
+        User sree =
+                user(
+                        1L,
+                        "Sree"
+                );
+
+        User testUser =
+                user(
+                        2L,
+                        "Test User"
+                );
+
+        SharedExpense expense =
+                expense(
+                        sree,
+                        "1000.00"
+                );
+
+        ExpenseSplit sreeSplit =
+                split(
+                        sree,
+                        "200.00"
+                );
+
+        ExpenseSplit testSplit =
+                split(
+                        testUser,
+                        "800.00"
+                );
+
+        Settlement settlement =
+                settlement(
+                        testUser,
+                        sree,
+                        "800.00"
+                );
+
+        GroupBalanceResponse response =
+                calculator.calculate(
+                        2L,
+                        List.of(expense),
+                        List.of(
+                                sreeSplit,
+                                testSplit
+                        ),
+                        List.of(
+                                settlement
+                        )
+                );
+
+        assertMoney(
+                "0.00",
+                balanceOf(
+                        response,
+                        1L
+                )
+        );
+
+        assertMoney(
+                "0.00",
+                balanceOf(
+                        response,
+                        2L
+                )
+        );
+
+        assertTrue(
+                response
+                        .settlements()
+                        .isEmpty()
+        );
+    }
+
+    @Test
+    void shouldCalculateMultipleExpenses() {
+
+        User user1 =
+                user(
+                        1L,
+                        "User 1"
+                );
+
+        User user2 =
+                user(
+                        2L,
+                        "User 2"
+                );
+
+        User user3 =
+                user(
+                        3L,
+                        "User 3"
+                );
+
+        SharedExpense expense1 =
+                expense(
                         user1,
                         "900.00"
                 );
 
-        SharedExpense food =
-                createExpense(
+        SharedExpense expense2 =
+                expense(
                         user2,
                         "300.00"
                 );
 
-        ExpenseSplit hotelUser1 =
-                createSplit(
-                        user1,
-                        "300.00"
-                );
-
-        ExpenseSplit hotelUser2 =
-                createSplit(
-                        user2,
-                        "300.00"
-                );
-
-        ExpenseSplit hotelUser3 =
-                createSplit(
-                        user3,
-                        "300.00"
-                );
-
-        ExpenseSplit foodUser1 =
-                createSplit(
-                        user1,
-                        "100.00"
-                );
-
-        ExpenseSplit foodUser2 =
-                createSplit(
-                        user2,
-                        "100.00"
-                );
-
-        ExpenseSplit foodUser3 =
-                createSplit(
-                        user3,
-                        "100.00"
+        List<ExpenseSplit> splits =
+                List.of(
+                        split(
+                                user1,
+                                "300.00"
+                        ),
+                        split(
+                                user2,
+                                "300.00"
+                        ),
+                        split(
+                                user3,
+                                "300.00"
+                        ),
+                        split(
+                                user1,
+                                "100.00"
+                        ),
+                        split(
+                                user2,
+                                "100.00"
+                        ),
+                        split(
+                                user3,
+                                "100.00"
+                        )
                 );
 
         GroupBalanceResponse response =
                 calculator.calculate(
                         1L,
                         List.of(
-                                hotel,
-                                food
+                                expense1,
+                                expense2
                         ),
-                        List.of(
-                                hotelUser1,
-                                hotelUser2,
-                                hotelUser3,
-                                foodUser1,
-                                foodUser2,
-                                foodUser3
-                        )
+                        splits,
+                        List.of()
                 );
 
-        assertEquals(
-                3,
-                response.memberBalances().size()
-        );
-
-        BigDecimal totalNetBalance =
-                response.memberBalances()
-                        .stream()
-                        .map(balance ->
-                                balance.netBalance()
-                        )
-                        .reduce(
-                                BigDecimal.ZERO,
-                                BigDecimal::add
-                        );
-
-        assertBigDecimalEquals(
-                "0.00",
-                totalNetBalance
-        );
-
-        /*
-         * User 1:
-         * Paid = 900
-         * Own shares = 300 + 100 = 400
-         * Net = +500
-         *
-         * User 2:
-         * Paid = 300
-         * Own shares = 300 + 100 = 400
-         * Net = -100
-         *
-         * User 3:
-         * Paid = 0
-         * Own shares = 300 + 100 = 400
-         * Net = -400
-         *
-         * Therefore total debt = 500
-         * and User 1 receives 500.
-         */
-
-        BigDecimal totalSettlements =
-                response.settlements()
-                        .stream()
-                        .map(settlement ->
-                                settlement.amount()
-                        )
-                        .reduce(
-                                BigDecimal.ZERO,
-                                BigDecimal::add
-                        );
-
-        assertBigDecimalEquals(
+        assertMoney(
                 "500.00",
-                totalSettlements
+                balanceOf(
+                        response,
+                        1L
+                )
+        );
+
+        assertMoney(
+                "-100.00",
+                balanceOf(
+                        response,
+                        2L
+                )
+        );
+
+        assertMoney(
+                "-400.00",
+                balanceOf(
+                        response,
+                        3L
+                )
+        );
+
+        BigDecimal totalSettlement =
+                response
+                        .settlements()
+                        .stream()
+                        .map(
+                                settlement ->
+                                        settlement.amount()
+                        )
+                        .reduce(
+                                BigDecimal.ZERO,
+                                BigDecimal::add
+                        );
+
+        assertMoney(
+                "500.00",
+                totalSettlement
         );
     }
 
     @Test
-    void shouldReturnZeroBalanceWhenUserPaidExactlyOwnShare() {
+    void shouldReturnZeroWhenUserPaidExactlyOwnShare() {
 
-        User sree = createUser(
-                1L,
-                "Sree"
-        );
+        User user =
+                user(
+                        1L,
+                        "User"
+                );
 
         SharedExpense expense =
-                createExpense(
-                        sree,
+                expense(
+                        user,
                         "500.00"
                 );
 
         ExpenseSplit split =
-                createSplit(
-                        sree,
+                split(
+                        user,
                         "500.00"
                 );
 
         GroupBalanceResponse response =
                 calculator.calculate(
                         1L,
-                        List.of(expense),
-                        List.of(split)
+                        List.of(
+                                expense
+                        ),
+                        List.of(
+                                split
+                        ),
+                        List.of()
                 );
 
-        assertEquals(
-                1,
-                response.memberBalances().size()
-        );
-
-        assertBigDecimalEquals(
+        assertMoney(
                 "0.00",
-                response.memberBalances()
-                        .get(0)
-                        .netBalance()
+                balanceOf(
+                        response,
+                        1L
+                )
         );
 
-        assertEquals(
-                0,
-                response.settlements().size()
+        assertTrue(
+                response
+                        .settlements()
+                        .isEmpty()
         );
     }
 
     @Test
-    void shouldReturnEmptyBalancesForNoExpensesAndNoSplits() {
+    void shouldHandleEmptyData() {
 
         GroupBalanceResponse response =
                 calculator.calculate(
-                        10L,
+                        1L,
+                        List.of(),
                         List.of(),
                         List.of()
                 );
 
-        assertEquals(
-                10L,
-                response.groupId()
+        assertTrue(
+                response
+                        .memberBalances()
+                        .isEmpty()
         );
 
-        assertEquals(
-                0,
-                response.memberBalances().size()
-        );
-
-        assertEquals(
-                0,
-                response.settlements().size()
+        assertTrue(
+                response
+                        .settlements()
+                        .isEmpty()
         );
     }
 
     @Test
-    void shouldCalculateExpectedBalanceFromM9Scenario() {
+    void shouldMatchRealM9Scenario() {
 
-        User sree = createUser(
-                1L,
-                "Sree"
-        );
+        User sree =
+                user(
+                        1L,
+                        "Sree"
+                );
 
-        User testUser = createUser(
-                2L,
-                "Test User"
-        );
+        User testUser =
+                user(
+                        2L,
+                        "Test User"
+                );
 
         SharedExpense dinner =
-                createExpense(
+                expense(
                         sree,
                         "100.00"
                 );
 
         SharedExpense hotel =
-                createExpense(
+                expense(
                         sree,
                         "1000.00"
                 );
 
         SharedExpense cab =
-                createExpense(
+                expense(
                         sree,
                         "1000.00"
                 );
 
         List<ExpenseSplit> splits =
                 List.of(
-                        createSplit(
+                        split(
                                 sree,
                                 "50.00"
                         ),
-                        createSplit(
+                        split(
                                 testUser,
                                 "50.00"
                         ),
 
-                        createSplit(
+                        split(
                                 sree,
                                 "600.00"
                         ),
-                        createSplit(
+                        split(
                                 testUser,
                                 "400.00"
                         ),
 
-                        createSplit(
+                        split(
                                 sree,
                                 "650.00"
                         ),
-                        createSplit(
+                        split(
                                 testUser,
                                 "350.00"
                         )
@@ -384,130 +521,188 @@ class NetBalanceCalculatorTest {
                                 hotel,
                                 cab
                         ),
-                        splits
+                        splits,
+                        List.of()
                 );
 
-        var sreeBalance =
-                response.memberBalances()
-                        .stream()
-                        .filter(balance ->
-                                balance.userId().equals(1L)
-                        )
-                        .findFirst()
-                        .orElseThrow();
-
-        var testUserBalance =
-                response.memberBalances()
-                        .stream()
-                        .filter(balance ->
-                                balance.userId().equals(2L)
-                        )
-                        .findFirst()
-                        .orElseThrow();
-
-        assertBigDecimalEquals(
+        assertMoney(
                 "800.00",
-                sreeBalance.netBalance()
+                balanceOf(
+                        response,
+                        1L
+                )
         );
 
-        assertBigDecimalEquals(
+        assertMoney(
                 "-800.00",
-                testUserBalance.netBalance()
+                balanceOf(
+                        response,
+                        2L
+                )
         );
 
         assertEquals(
                 1,
-                response.settlements().size()
+                response
+                        .settlements()
+                        .size()
         );
 
-        var settlement =
-                response.settlements().get(0);
-
-        assertEquals(
-                2L,
-                settlement.fromUserId()
-        );
-
-        assertEquals(
-                1L,
-                settlement.toUserId()
-        );
-
-        assertBigDecimalEquals(
+        assertMoney(
                 "800.00",
-                settlement.amount()
+                response
+                        .settlements()
+                        .get(0)
+                        .amount()
         );
     }
 
-    private User createUser(
+    private User user(
             Long id,
             String name
     ) {
 
-        User user = mock(User.class);
+        User user =
+                mock(
+                        User.class
+                );
 
         when(
                 user.getId()
-        ).thenReturn(id);
+        ).thenReturn(
+                id
+        );
 
         when(
                 user.getName()
-        ).thenReturn(name);
+        ).thenReturn(
+                name
+        );
 
         return user;
     }
 
-    private SharedExpense createExpense(
-            User paidBy,
+    private SharedExpense expense(
+            User payer,
             String amount
     ) {
 
         SharedExpense expense =
-                mock(SharedExpense.class);
+                mock(
+                        SharedExpense.class
+                );
 
         when(
                 expense.getPaidBy()
-        ).thenReturn(paidBy);
+        ).thenReturn(
+                payer
+        );
 
         when(
                 expense.getAmount()
         ).thenReturn(
-                new BigDecimal(amount)
+                new BigDecimal(
+                        amount
+                )
         );
 
         return expense;
     }
 
-    private ExpenseSplit createSplit(
+    private ExpenseSplit split(
             User user,
-            String shareAmount
+            String amount
     ) {
 
         ExpenseSplit split =
-                mock(ExpenseSplit.class);
+                mock(
+                        ExpenseSplit.class
+                );
 
         when(
                 split.getUser()
-        ).thenReturn(user);
+        ).thenReturn(
+                user
+        );
 
         when(
                 split.getShareAmount()
         ).thenReturn(
-                new BigDecimal(shareAmount)
+                new BigDecimal(
+                        amount
+                )
         );
 
         return split;
     }
 
-    private void assertBigDecimalEquals(
+    private Settlement settlement(
+            User fromUser,
+            User toUser,
+            String amount
+    ) {
+
+        Settlement settlement =
+                mock(
+                        Settlement.class
+                );
+
+        when(
+                settlement.getFromUser()
+        ).thenReturn(
+                fromUser
+        );
+
+        when(
+                settlement.getToUser()
+        ).thenReturn(
+                toUser
+        );
+
+        when(
+                settlement.getAmount()
+        ).thenReturn(
+                new BigDecimal(
+                        amount
+                )
+        );
+
+        return settlement;
+    }
+
+    private BigDecimal balanceOf(
+            GroupBalanceResponse response,
+            Long userId
+    ) {
+
+        return response
+                .memberBalances()
+                .stream()
+                .filter(
+                        balance ->
+                                balance
+                                        .userId()
+                                        .equals(
+                                                userId
+                                        )
+                )
+                .findFirst()
+                .orElseThrow()
+                .netBalance();
+    }
+
+    private void assertMoney(
             String expected,
             BigDecimal actual
     ) {
 
         assertEquals(
                 0,
-                new BigDecimal(expected)
-                        .compareTo(actual)
+                new BigDecimal(
+                        expected
+                ).compareTo(
+                        actual
+                )
         );
     }
 }

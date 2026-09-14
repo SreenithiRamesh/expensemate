@@ -2,16 +2,9 @@ package com.expensemate.service;
 
 import com.expensemate.balance.BalanceCalculator;
 import com.expensemate.dto.balance.GroupBalanceResponse;
-import com.expensemate.entity.ExpenseGroup;
-import com.expensemate.entity.ExpenseSplit;
-import com.expensemate.entity.SharedExpense;
-import com.expensemate.entity.User;
+import com.expensemate.entity.*;
 import com.expensemate.exception.ResourceNotFoundException;
-import com.expensemate.repository.ExpenseGroupRepository;
-import com.expensemate.repository.ExpenseSplitRepository;
-import com.expensemate.repository.GroupMemberRepository;
-import com.expensemate.repository.SharedExpenseRepository;
-import com.expensemate.repository.UserRepository;
+import com.expensemate.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,140 +14,223 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class BalanceServiceTest {
 
     @Mock
-    private SharedExpenseRepository sharedExpenseRepository;
+    private SharedExpenseRepository
+            sharedExpenseRepository;
 
     @Mock
-    private ExpenseSplitRepository expenseSplitRepository;
+    private ExpenseSplitRepository
+            expenseSplitRepository;
 
     @Mock
-    private ExpenseGroupRepository expenseGroupRepository;
+    private ExpenseGroupRepository
+            expenseGroupRepository;
 
     @Mock
-    private GroupMemberRepository groupMemberRepository;
+    private GroupMemberRepository
+            groupMemberRepository;
 
     @Mock
-    private UserRepository userRepository;
+    private UserRepository
+            userRepository;
 
     @Mock
-    private BalanceCalculator balanceCalculator;
+    private SettlementRepository
+            settlementRepository;
 
-    private BalanceService balanceService;
+    @Mock
+    private BalanceCalculator
+            balanceCalculator;
+
+    private BalanceService service;
 
     @BeforeEach
     void setUp() {
-        balanceService = new BalanceService(
-                sharedExpenseRepository,
-                expenseSplitRepository,
-                expenseGroupRepository,
-                groupMemberRepository,
-                userRepository,
-                balanceCalculator
-        );
+
+        service =
+                new BalanceService(
+                        sharedExpenseRepository,
+                        expenseSplitRepository,
+                        expenseGroupRepository,
+                        groupMemberRepository,
+                        userRepository,
+                        settlementRepository,
+                        balanceCalculator
+                );
     }
 
     @Test
-    void shouldReturnCalculatedGroupBalancesForValidMember() {
+    void shouldDelegateGroupDataToCalculator() {
 
         Long groupId = 2L;
-        String email = "sree@example.com";
 
-        User user = mock(User.class);
-        ExpenseGroup group = mock(ExpenseGroup.class);
+        String email =
+                "sree@example.com";
 
-        SharedExpense expense = mock(SharedExpense.class);
-        ExpenseSplit split = mock(ExpenseSplit.class);
+        User user =
+                mock(
+                        User.class
+                );
 
-        List<SharedExpense> expenses =
-                List.of(expense);
+        ExpenseGroup group =
+                mock(
+                        ExpenseGroup.class
+                );
 
-        List<ExpenseSplit> splits =
-                List.of(split);
+        SharedExpense expense =
+                mock(
+                        SharedExpense.class
+                );
 
-        GroupBalanceResponse expectedResponse =
+        ExpenseSplit split =
+                mock(
+                        ExpenseSplit.class
+                );
+
+        Settlement settlement =
+                mock(
+                        Settlement.class
+                );
+
+        GroupBalanceResponse expected =
                 new GroupBalanceResponse(
                         groupId,
                         List.of(),
                         List.of()
                 );
 
-        when(userRepository.findByEmail(email))
-                .thenReturn(Optional.of(user));
-
-        when(user.getId())
-                .thenReturn(1L);
-
-        when(expenseGroupRepository.findById(groupId))
-                .thenReturn(Optional.of(group));
+        when(
+                user.getId()
+        ).thenReturn(
+                1L
+        );
 
         when(
-                groupMemberRepository.existsByGroupIdAndUserId(
-                        groupId,
-                        1L
+                userRepository
+                        .findByEmail(
+                                email
+                        )
+        ).thenReturn(
+                Optional.of(
+                        user
                 )
-        ).thenReturn(true);
+        );
 
-        when(sharedExpenseRepository.findByGroup_Id(groupId))
-                .thenReturn(expenses);
+        when(
+                expenseGroupRepository
+                        .findById(
+                                groupId
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
 
-        when(expenseSplitRepository.findByExpense_Group_Id(groupId))
-                .thenReturn(splits);
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                groupId,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        when(
+                sharedExpenseRepository
+                        .findByGroup_Id(
+                                groupId
+                        )
+        ).thenReturn(
+                List.of(
+                        expense
+                )
+        );
+
+        when(
+                expenseSplitRepository
+                        .findByExpense_Group_Id(
+                                groupId
+                        )
+        ).thenReturn(
+                List.of(
+                        split
+                )
+        );
+
+        when(
+                settlementRepository
+                        .findByGroup_Id(
+                                groupId
+                        )
+        ).thenReturn(
+                List.of(
+                        settlement
+                )
+        );
 
         when(
                 balanceCalculator.calculate(
                         groupId,
-                        expenses,
-                        splits
+                        List.of(expense),
+                        List.of(split),
+                        List.of(settlement)
                 )
-        ).thenReturn(expectedResponse);
-
-        GroupBalanceResponse actualResponse =
-                balanceService.getGroupBalances(
-                        groupId,
-                        email
-                );
-
-        assertEquals(
-                expectedResponse,
-                actualResponse
+        ).thenReturn(
+                expected
         );
 
-        verify(balanceCalculator).calculate(
+        GroupBalanceResponse actual =
+                service
+                        .getGroupBalances(
+                                groupId,
+                                email
+                        );
+
+        assertEquals(
+                expected,
+                actual
+        );
+
+        verify(
+                balanceCalculator
+        ).calculate(
                 groupId,
-                expenses,
-                splits
+                List.of(expense),
+                List.of(split),
+                List.of(settlement)
         );
     }
 
     @Test
     void shouldThrowWhenUserDoesNotExist() {
 
-        String email = "missing@example.com";
-
-        when(userRepository.findByEmail(email))
-                .thenReturn(Optional.empty());
+        when(
+                userRepository
+                        .findByEmail(
+                                "missing@example.com"
+                        )
+        ).thenReturn(
+                Optional.empty()
+        );
 
         assertThrows(
                 ResourceNotFoundException.class,
                 () ->
-                        balanceService.getGroupBalances(
-                                2L,
-                                email
+                        service.getGroupBalances(
+                                1L,
+                                "missing@example.com"
                         )
         );
 
         verifyNoInteractions(
-                expenseGroupRepository,
-                groupMemberRepository,
-                sharedExpenseRepository,
-                expenseSplitRepository,
                 balanceCalculator
         );
     }
@@ -162,136 +238,219 @@ class BalanceServiceTest {
     @Test
     void shouldThrowWhenGroupDoesNotExist() {
 
-        Long groupId = 999L;
-        String email = "sree@example.com";
-
-        User user = mock(User.class);
-
-        when(userRepository.findByEmail(email))
-                .thenReturn(Optional.of(user));
-
-        when(expenseGroupRepository.findById(groupId))
-                .thenReturn(Optional.empty());
-
-        assertThrows(
-                ResourceNotFoundException.class,
-                () ->
-                        balanceService.getGroupBalances(
-                                groupId,
-                                email
-                        )
-        );
-
-        verifyNoInteractions(
-                groupMemberRepository,
-                sharedExpenseRepository,
-                expenseSplitRepository,
-                balanceCalculator
-        );
-    }
-
-    @Test
-    void shouldThrowWhenUserIsNotGroupMember() {
-
-        Long groupId = 2L;
-        String email = "outsider@example.com";
-
-        User user = mock(User.class);
-        ExpenseGroup group = mock(ExpenseGroup.class);
-
-        when(userRepository.findByEmail(email))
-                .thenReturn(Optional.of(user));
-
-        when(user.getId())
-                .thenReturn(5L);
-
-        when(expenseGroupRepository.findById(groupId))
-                .thenReturn(Optional.of(group));
+        User user =
+                mock(
+                        User.class
+                );
 
         when(
-                groupMemberRepository.existsByGroupIdAndUserId(
-                        groupId,
-                        5L
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        user
                 )
-        ).thenReturn(false);
+        );
+
+        when(
+                expenseGroupRepository
+                        .findById(
+                                99L
+                        )
+        ).thenReturn(
+                Optional.empty()
+        );
 
         assertThrows(
                 ResourceNotFoundException.class,
                 () ->
-                        balanceService.getGroupBalances(
-                                groupId,
-                                email
+                        service.getGroupBalances(
+                                99L,
+                                "sree@example.com"
+                        )
+        );
+
+        verifyNoInteractions(
+                balanceCalculator
+        );
+    }
+
+    @Test
+    void shouldThrowWhenUserIsNotMember() {
+
+        User user =
+                mock(
+                        User.class
+                );
+
+        ExpenseGroup group =
+                mock(
+                        ExpenseGroup.class
+                );
+
+        when(
+                user.getId()
+        ).thenReturn(
+                1L
+        );
+
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        user
+                )
+        );
+
+        when(
+                expenseGroupRepository
+                        .findById(
+                                2L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                false
+        );
+
+        assertThrows(
+                ResourceNotFoundException.class,
+                () ->
+                        service.getGroupBalances(
+                                2L,
+                                "sree@example.com"
                         )
         );
 
         verifyNoInteractions(
                 sharedExpenseRepository,
                 expenseSplitRepository,
+                settlementRepository,
                 balanceCalculator
         );
     }
 
     @Test
-    void shouldDelegateEmptyExpenseListsToCalculator() {
+    void shouldDelegateEmptyLists() {
 
-        Long groupId = 2L;
-        String email = "sree@example.com";
+        User user =
+                mock(
+                        User.class
+                );
 
-        User user = mock(User.class);
-        ExpenseGroup group = mock(ExpenseGroup.class);
+        ExpenseGroup group =
+                mock(
+                        ExpenseGroup.class
+                );
 
-        List<SharedExpense> expenses =
-                List.of();
+        when(
+                user.getId()
+        ).thenReturn(
+                1L
+        );
 
-        List<ExpenseSplit> splits =
-                List.of();
+        when(
+                userRepository
+                        .findByEmail(
+                                "sree@example.com"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        user
+                )
+        );
 
-        GroupBalanceResponse expectedResponse =
+        when(
+                expenseGroupRepository
+                        .findById(
+                                1L
+                        )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                1L,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        when(
+                sharedExpenseRepository
+                        .findByGroup_Id(
+                                1L
+                        )
+        ).thenReturn(
+                List.of()
+        );
+
+        when(
+                expenseSplitRepository
+                        .findByExpense_Group_Id(
+                                1L
+                        )
+        ).thenReturn(
+                List.of()
+        );
+
+        when(
+                settlementRepository
+                        .findByGroup_Id(
+                                1L
+                        )
+        ).thenReturn(
+                List.of()
+        );
+
+        GroupBalanceResponse expected =
                 new GroupBalanceResponse(
-                        groupId,
+                        1L,
                         List.of(),
                         List.of()
                 );
 
-        when(userRepository.findByEmail(email))
-                .thenReturn(Optional.of(user));
-
-        when(user.getId())
-                .thenReturn(1L);
-
-        when(expenseGroupRepository.findById(groupId))
-                .thenReturn(Optional.of(group));
-
-        when(
-                groupMemberRepository.existsByGroupIdAndUserId(
-                        groupId,
-                        1L
-                )
-        ).thenReturn(true);
-
-        when(sharedExpenseRepository.findByGroup_Id(groupId))
-                .thenReturn(expenses);
-
-        when(expenseSplitRepository.findByExpense_Group_Id(groupId))
-                .thenReturn(splits);
-
         when(
                 balanceCalculator.calculate(
-                        groupId,
-                        expenses,
-                        splits
+                        1L,
+                        List.of(),
+                        List.of(),
+                        List.of()
                 )
-        ).thenReturn(expectedResponse);
+        ).thenReturn(
+                expected
+        );
 
-        GroupBalanceResponse response =
-                balanceService.getGroupBalances(
-                        groupId,
-                        email
-                );
+        GroupBalanceResponse actual =
+                service
+                        .getGroupBalances(
+                                1L,
+                                "sree@example.com"
+                        );
 
         assertEquals(
-                expectedResponse,
-                response
+                expected,
+                actual
         );
     }
 }

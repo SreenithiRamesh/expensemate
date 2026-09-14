@@ -4,6 +4,7 @@ import com.expensemate.dto.balance.BalanceSettlementResponse;
 import com.expensemate.dto.balance.GroupBalanceResponse;
 import com.expensemate.dto.balance.MemberBalanceResponse;
 import com.expensemate.entity.ExpenseSplit;
+import com.expensemate.entity.Settlement;
 import com.expensemate.entity.SharedExpense;
 import org.springframework.stereotype.Component;
 
@@ -15,109 +16,241 @@ import java.util.List;
 import java.util.Map;
 
 @Component
-public class NetBalanceCalculator implements BalanceCalculator {
+public class NetBalanceCalculator
+        implements BalanceCalculator {
 
     @Override
     public GroupBalanceResponse calculate(
             Long groupId,
             List<SharedExpense> expenses,
-            List<ExpenseSplit> splits
+            List<ExpenseSplit> splits,
+            List<Settlement> settlements
     ) {
 
-        Map<Long, BigDecimal> netBalances = new HashMap<>();
-        Map<Long, String> userNames = new HashMap<>();
+        Map<Long, BigDecimal> netBalances =
+                new HashMap<>();
 
-        // STEP 1:
-        // Add the total amount paid by each payer
+        Map<Long, String> userNames =
+                new HashMap<>();
+
+        /*
+         * STEP 1
+         *
+         * Add the complete expense amount
+         * to the person who paid.
+         */
         for (SharedExpense expense : expenses) {
 
-            Long payerId = expense.getPaidBy().getId();
-            String payerName = expense.getPaidBy().getName();
+            Long payerId =
+                    expense.getPaidBy().getId();
 
-            netBalances.putIfAbsent(payerId, BigDecimal.ZERO);
-            userNames.putIfAbsent(payerId, payerName);
+            String payerName =
+                    expense.getPaidBy().getName();
+
+            netBalances.putIfAbsent(
+                    payerId,
+                    BigDecimal.ZERO
+            );
+
+            userNames.putIfAbsent(
+                    payerId,
+                    payerName
+            );
 
             netBalances.put(
                     payerId,
-                    netBalances.get(payerId)
-                            .add(expense.getAmount())
+                    netBalances
+                            .get(payerId)
+                            .add(
+                                    expense.getAmount()
+                            )
             );
         }
 
-        // STEP 2:
-        // Subtract each member's share
+        /*
+         * STEP 2
+         *
+         * Subtract each person's own
+         * expense share.
+         */
         for (ExpenseSplit split : splits) {
 
-            Long userId = split.getUser().getId();
-            String userName = split.getUser().getName();
+            Long userId =
+                    split.getUser().getId();
 
-            netBalances.putIfAbsent(userId, BigDecimal.ZERO);
-            userNames.putIfAbsent(userId, userName);
+            String userName =
+                    split.getUser().getName();
+
+            netBalances.putIfAbsent(
+                    userId,
+                    BigDecimal.ZERO
+            );
+
+            userNames.putIfAbsent(
+                    userId,
+                    userName
+            );
 
             netBalances.put(
                     userId,
-                    netBalances.get(userId)
-                            .subtract(split.getShareAmount())
+                    netBalances
+                            .get(userId)
+                            .subtract(
+                                    split.getShareAmount()
+                            )
             );
         }
 
-        // STEP 3:
-        // Convert calculated values into response DTOs
+        /*
+         * STEP 3
+         *
+         * Apply recorded settlements.
+         *
+         * If debtor pays creditor:
+         *
+         * debtor balance increases
+         * toward zero.
+         *
+         * creditor balance decreases
+         * toward zero.
+         */
+        for (Settlement settlement : settlements) {
+
+            Long fromUserId =
+                    settlement
+                            .getFromUser()
+                            .getId();
+
+            String fromUserName =
+                    settlement
+                            .getFromUser()
+                            .getName();
+
+            Long toUserId =
+                    settlement
+                            .getToUser()
+                            .getId();
+
+            String toUserName =
+                    settlement
+                            .getToUser()
+                            .getName();
+
+            BigDecimal amount =
+                    settlement.getAmount();
+
+            netBalances.putIfAbsent(
+                    fromUserId,
+                    BigDecimal.ZERO
+            );
+
+            netBalances.putIfAbsent(
+                    toUserId,
+                    BigDecimal.ZERO
+            );
+
+            userNames.putIfAbsent(
+                    fromUserId,
+                    fromUserName
+            );
+
+            userNames.putIfAbsent(
+                    toUserId,
+                    toUserName
+            );
+
+            /*
+             * Debtor paid money,
+             * therefore debt decreases.
+             */
+            netBalances.put(
+                    fromUserId,
+                    netBalances
+                            .get(fromUserId)
+                            .add(amount)
+            );
+
+            /*
+             * Creditor received money,
+             * therefore receivable decreases.
+             */
+            netBalances.put(
+                    toUserId,
+                    netBalances
+                            .get(toUserId)
+                            .subtract(amount)
+            );
+        }
+
         List<MemberBalanceResponse> memberBalances =
-                netBalances.entrySet()
+                netBalances
+                        .entrySet()
                         .stream()
-                        .map(entry ->
-                                new MemberBalanceResponse(
-                                        entry.getKey(),
-                                        userNames.get(entry.getKey()),
-                                        entry.getValue()
-                                                .setScale(
-                                                        2,
-                                                        RoundingMode.HALF_UP
+                        .map(
+                                entry ->
+                                        new MemberBalanceResponse(
+                                                entry.getKey(),
+                                                userNames.get(
+                                                        entry.getKey()
+                                                ),
+                                                normalize(
+                                                        entry.getValue()
                                                 )
-                                )
+                                        )
                         )
                         .toList();
 
-        // STEP 4:
-        // Separate creditors and debtors
-        List<BalanceNode> creditors = new ArrayList<>();
-        List<BalanceNode> debtors = new ArrayList<>();
+        List<BalanceNode> creditors =
+                new ArrayList<>();
 
-        for (Map.Entry<Long, BigDecimal> entry : netBalances.entrySet()) {
+        List<BalanceNode> debtors =
+                new ArrayList<>();
+
+        for (
+                Map.Entry<Long, BigDecimal> entry
+                : netBalances.entrySet()
+        ) {
 
             BigDecimal balance =
-                    entry.getValue()
-                            .setScale(
-                                    2,
-                                    RoundingMode.HALF_UP
-                            );
+                    normalize(
+                            entry.getValue()
+                    );
 
-            if (balance.compareTo(BigDecimal.ZERO) > 0) {
+            if (
+                    balance.compareTo(
+                            BigDecimal.ZERO
+                    ) > 0
+            ) {
 
                 creditors.add(
                         new BalanceNode(
                                 entry.getKey(),
-                                userNames.get(entry.getKey()),
+                                userNames.get(
+                                        entry.getKey()
+                                ),
                                 balance
                         )
                 );
 
-            } else if (balance.compareTo(BigDecimal.ZERO) < 0) {
+            } else if (
+                    balance.compareTo(
+                            BigDecimal.ZERO
+                    ) < 0
+            ) {
 
                 debtors.add(
                         new BalanceNode(
                                 entry.getKey(),
-                                userNames.get(entry.getKey()),
+                                userNames.get(
+                                        entry.getKey()
+                                ),
                                 balance.abs()
                         )
                 );
             }
         }
 
-        // STEP 5:
-        // Match debtors with creditors
-        List<BalanceSettlementResponse> settlements =
+        List<BalanceSettlementResponse> balanceSettlements =
                 calculateSettlements(
                         creditors,
                         debtors
@@ -126,16 +259,17 @@ public class NetBalanceCalculator implements BalanceCalculator {
         return new GroupBalanceResponse(
                 groupId,
                 memberBalances,
-                settlements
+                balanceSettlements
         );
     }
 
-    private List<BalanceSettlementResponse> calculateSettlements(
+    private List<BalanceSettlementResponse>
+    calculateSettlements(
             List<BalanceNode> creditors,
             List<BalanceNode> debtors
     ) {
 
-        List<BalanceSettlementResponse> settlements =
+        List<BalanceSettlementResponse> result =
                 new ArrayList<>();
 
         int creditorIndex = 0;
@@ -148,36 +282,47 @@ public class NetBalanceCalculator implements BalanceCalculator {
         ) {
 
             BalanceNode creditor =
-                    creditors.get(creditorIndex);
+                    creditors.get(
+                            creditorIndex
+                    );
 
             BalanceNode debtor =
-                    debtors.get(debtorIndex);
+                    debtors.get(
+                            debtorIndex
+                    );
 
             BigDecimal settlementAmount =
-                    creditor.amount.min(debtor.amount);
+                    creditor.amount
+                            .min(
+                                    debtor.amount
+                            );
 
-            settlements.add(
+            settlementAmount =
+                    normalize(
+                            settlementAmount
+                    );
+
+            result.add(
                     new BalanceSettlementResponse(
                             debtor.userId,
                             debtor.userName,
                             creditor.userId,
                             creditor.userName,
-                            settlementAmount.setScale(
-                                    2,
-                                    RoundingMode.HALF_UP
-                            )
+                            settlementAmount
                     )
             );
 
             creditor.amount =
-                    creditor.amount.subtract(
-                            settlementAmount
-                    );
+                    creditor.amount
+                            .subtract(
+                                    settlementAmount
+                            );
 
             debtor.amount =
-                    debtor.amount.subtract(
-                            settlementAmount
-                    );
+                    debtor.amount
+                            .subtract(
+                                    settlementAmount
+                            );
 
             if (
                     creditor.amount.compareTo(
@@ -196,13 +341,25 @@ public class NetBalanceCalculator implements BalanceCalculator {
             }
         }
 
-        return settlements;
+        return result;
+    }
+
+    private BigDecimal normalize(
+            BigDecimal amount
+    ) {
+
+        return amount.setScale(
+                2,
+                RoundingMode.HALF_UP
+        );
     }
 
     private static class BalanceNode {
 
         private final Long userId;
+
         private final String userName;
+
         private BigDecimal amount;
 
         private BalanceNode(
@@ -210,6 +367,7 @@ public class NetBalanceCalculator implements BalanceCalculator {
                 String userName,
                 BigDecimal amount
         ) {
+
             this.userId = userId;
             this.userName = userName;
             this.amount = amount;
