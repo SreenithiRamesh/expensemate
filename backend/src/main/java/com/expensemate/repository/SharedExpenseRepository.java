@@ -10,4 +10,5 @@ public interface SharedExpenseRepository
 
     List<SharedExpense>
     findByGroupIdOrderByExpenseDateDescCreatedAtDesc(Long groupId);
+    List<SharedExpense> findByGroup_Id(Long groupId);
 }
