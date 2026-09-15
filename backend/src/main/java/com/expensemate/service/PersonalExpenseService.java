@@ -5,16 +5,17 @@ import com.expensemate.dto.PersonalExpenseResponse;
 import com.expensemate.entity.ExpenseCategory;
 import com.expensemate.entity.PersonalExpense;
 import com.expensemate.entity.User;
+import com.expensemate.exception.InvalidRequestException;
 import com.expensemate.exception.ResourceNotFoundException;
 import com.expensemate.repository.PersonalExpenseRepository;
 import com.expensemate.repository.UserRepository;
+import com.expensemate.service.ai.MonthlyInsightCacheService;
 import com.expensemate.specification.PersonalExpenseSpecification;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.expensemate.exception.InvalidRequestException;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -24,13 +25,17 @@ public class PersonalExpenseService {
 
     private final PersonalExpenseRepository expenseRepository;
     private final UserRepository userRepository;
+    private final MonthlyInsightCacheService monthlyInsightCacheService;
 
     public PersonalExpenseService(
             PersonalExpenseRepository expenseRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            MonthlyInsightCacheService monthlyInsightCacheService
     ) {
         this.expenseRepository = expenseRepository;
         this.userRepository = userRepository;
+        this.monthlyInsightCacheService =
+                monthlyInsightCacheService;
     }
 
     @Transactional
@@ -55,6 +60,19 @@ public class PersonalExpenseService {
 
         PersonalExpense savedExpense =
                 expenseRepository.save(expense);
+
+        /*
+         * An expense created in month M changes:
+         *
+         * 1. The insight for month M.
+         * 2. The insight for month M + 1 because that insight
+         *    uses month M as its previous-month spending.
+         */
+        monthlyInsightCacheService
+                .invalidateForExpenseChange(
+                        user.getId(),
+                        savedExpense.getExpenseDate()
+                );
 
         return toResponse(savedExpense);
     }
@@ -147,16 +165,42 @@ public class PersonalExpenseService {
                                 )
                         );
 
+        /*
+         * Capture the old date BEFORE modifying the expense.
+         *
+         * This is required when an expense moves from one
+         * month to another.
+         *
+         * Example:
+         * August -> September
+         *
+         * We must invalidate:
+         * August, September and October.
+         */
+        LocalDate oldExpenseDate =
+                expense.getExpenseDate();
+
         expense.setAmount(request.getAmount());
         expense.setCategory(request.getCategory());
         expense.setExpenseDate(request.getExpenseDate());
         expense.setDescription(
-                normalizeDescription(request.getDescription())
+                normalizeDescription(
+                        request.getDescription()
+                )
         );
-        expense.setUpdatedAt(LocalDateTime.now());
+        expense.setUpdatedAt(
+                LocalDateTime.now()
+        );
 
         PersonalExpense updatedExpense =
                 expenseRepository.save(expense);
+
+        monthlyInsightCacheService
+                .invalidateForExpenseChange(
+                        user.getId(),
+                        oldExpenseDate,
+                        updatedExpense.getExpenseDate()
+                );
 
         return toResponse(updatedExpense);
     }
@@ -180,12 +224,27 @@ public class PersonalExpenseService {
                                 )
                         );
 
+        /*
+         * Keep the affected date before deleting the entity.
+         */
+        LocalDate expenseDate =
+                expense.getExpenseDate();
+
         expenseRepository.delete(expense);
+
+        monthlyInsightCacheService
+                .invalidateForExpenseChange(
+                        user.getId(),
+                        expenseDate
+                );
     }
 
-    private User getUserByEmail(String email) {
+    private User getUserByEmail(
+            String email
+    ) {
 
-        return userRepository.findByEmail(email)
+        return userRepository
+                .findByEmail(email)
                 .orElseThrow(() ->
                         new ResourceNotFoundException(
                                 "User not found"
@@ -208,13 +267,16 @@ public class PersonalExpenseService {
         );
     }
 
-    private String normalizeDescription(String description) {
+    private String normalizeDescription(
+            String description
+    ) {
 
         if (description == null) {
             return null;
         }
 
-        String trimmed = description.trim();
+        String trimmed =
+                description.trim();
 
         return trimmed.isEmpty()
                 ? null

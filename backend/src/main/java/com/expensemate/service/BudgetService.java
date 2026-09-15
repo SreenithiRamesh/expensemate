@@ -10,6 +10,7 @@ import com.expensemate.exception.ResourceNotFoundException;
 import com.expensemate.repository.BudgetRepository;
 import com.expensemate.repository.PersonalExpenseRepository;
 import com.expensemate.repository.UserRepository;
+import com.expensemate.service.ai.MonthlyInsightCacheService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,15 +27,19 @@ public class BudgetService {
     private final BudgetRepository budgetRepository;
     private final UserRepository userRepository;
     private final PersonalExpenseRepository expenseRepository;
+    private final MonthlyInsightCacheService monthlyInsightCacheService;
 
     public BudgetService(
             BudgetRepository budgetRepository,
             UserRepository userRepository,
-            PersonalExpenseRepository expenseRepository
+            PersonalExpenseRepository expenseRepository,
+            MonthlyInsightCacheService monthlyInsightCacheService
     ) {
         this.budgetRepository = budgetRepository;
         this.userRepository = userRepository;
         this.expenseRepository = expenseRepository;
+        this.monthlyInsightCacheService =
+                monthlyInsightCacheService;
     }
 
     @Transactional
@@ -43,7 +48,8 @@ public class BudgetService {
             BudgetRequest request
     ) {
 
-        User user = getUserByEmail(email);
+        User user =
+                getUserByEmail(email);
 
         boolean exists =
                 budgetRepository
@@ -60,20 +66,38 @@ public class BudgetService {
             );
         }
 
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime now =
+                LocalDateTime.now();
 
-        Budget budget = new Budget(
-                user,
-                request.getCategory(),
-                request.getMonthlyLimit(),
-                request.getMonth(),
-                request.getYear(),
-                now,
-                now
-        );
+        Budget budget =
+                new Budget(
+                        user,
+                        request.getCategory(),
+                        request.getMonthlyLimit(),
+                        request.getMonth(),
+                        request.getYear(),
+                        now,
+                        now
+                );
 
         Budget saved =
                 budgetRepository.save(budget);
+
+        /*
+         * The newly created budget changes the
+         * monthly insight for this month.
+         */
+        YearMonth budgetMonth =
+                YearMonth.of(
+                        saved.getYear(),
+                        saved.getMonth()
+                );
+
+        monthlyInsightCacheService
+                .invalidateForBudgetChange(
+                        user.getId(),
+                        budgetMonth
+                );
 
         return toResponse(saved);
     }
@@ -84,7 +108,8 @@ public class BudgetService {
             Long budgetId
     ) {
 
-        User user = getUserByEmail(email);
+        User user =
+                getUserByEmail(email);
 
         Budget budget =
                 budgetRepository
@@ -108,7 +133,8 @@ public class BudgetService {
             Integer year
     ) {
 
-        User user = getUserByEmail(email);
+        User user =
+                getUserByEmail(email);
 
         /*
          * Business rule:
@@ -124,7 +150,8 @@ public class BudgetService {
         }
 
         /*
-         * Protect against invalid query values such as month=15.
+         * Protect against invalid query values
+         * such as month=15.
          */
         if (month != null
                 && (month < 1 || month > 12)) {
@@ -174,7 +201,8 @@ public class BudgetService {
             BudgetRequest request
     ) {
 
-        User user = getUserByEmail(email);
+        User user =
+                getUserByEmail(email);
 
         Budget budget =
                 budgetRepository
@@ -187,6 +215,22 @@ public class BudgetService {
                                         "Budget not found"
                                 )
                         );
+
+        /*
+         * Capture the old budget period BEFORE
+         * modifying month or year.
+         *
+         * If a budget moves:
+         *
+         * August -> September
+         *
+         * both cached monthly insights become stale.
+         */
+        YearMonth oldBudgetMonth =
+                YearMonth.of(
+                        budget.getYear(),
+                        budget.getMonth()
+                );
 
         /*
          * A duplicate check is only required if the
@@ -241,6 +285,26 @@ public class BudgetService {
         Budget updated =
                 budgetRepository.save(budget);
 
+        YearMonth newBudgetMonth =
+                YearMonth.of(
+                        updated.getYear(),
+                        updated.getMonth()
+                );
+
+        /*
+         * If old and new months are identical,
+         * the cache service deduplicates the month.
+         *
+         * If the period changed, both old and
+         * new monthly insights are invalidated.
+         */
+        monthlyInsightCacheService
+                .invalidateForBudgetChange(
+                        user.getId(),
+                        oldBudgetMonth,
+                        newBudgetMonth
+                );
+
         return toResponse(updated);
     }
 
@@ -250,7 +314,8 @@ public class BudgetService {
             Long budgetId
     ) {
 
-        User user = getUserByEmail(email);
+        User user =
+                getUserByEmail(email);
 
         Budget budget =
                 budgetRepository
@@ -264,7 +329,23 @@ public class BudgetService {
                                 )
                         );
 
+        /*
+         * Capture the budget period before deletion
+         * so the correct cached insight can be removed.
+         */
+        YearMonth budgetMonth =
+                YearMonth.of(
+                        budget.getYear(),
+                        budget.getMonth()
+                );
+
         budgetRepository.delete(budget);
+
+        monthlyInsightCacheService
+                .invalidateForBudgetChange(
+                        user.getId(),
+                        budgetMonth
+                );
     }
 
     private BudgetResponse toResponse(
@@ -285,7 +366,8 @@ public class BudgetService {
 
         /*
          * Expense records are the source of truth.
-         * Spending is calculated directly from personal_expenses.
+         * Spending is calculated directly from
+         * personal_expenses.
          */
         BigDecimal spent =
                 expenseRepository.calculateTotalSpent(
@@ -296,8 +378,8 @@ public class BudgetService {
                 );
 
         /*
-         * Defensive fallback in case an aggregate query
-         * unexpectedly returns null.
+         * Defensive fallback in case the aggregate
+         * query unexpectedly returns null.
          */
         if (spent == null) {
             spent = BigDecimal.ZERO;
