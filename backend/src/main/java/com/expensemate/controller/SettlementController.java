@@ -6,6 +6,7 @@ import com.expensemate.service.SettlementService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import jakarta.validation.Valid;
 
 import java.util.List;
 
@@ -37,7 +38,7 @@ public class SettlementController {
                     required = false
             )
             String idempotencyKey,
-            @RequestBody SettlementCreateRequest request,
+            @Valid @RequestBody SettlementCreateRequest request,
             Authentication authentication
     ) {
 

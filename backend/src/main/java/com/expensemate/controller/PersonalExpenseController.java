@@ -5,6 +5,8 @@ import com.expensemate.dto.PersonalExpenseResponse;
 import com.expensemate.entity.ExpenseCategory;
 import com.expensemate.service.PersonalExpenseService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -12,12 +14,14 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/v1/expenses")
+@Validated
 public class PersonalExpenseController {
 
     private final PersonalExpenseService expenseService;
@@ -76,22 +80,27 @@ public class PersonalExpenseController {
             String search,
 
             @RequestParam(defaultValue = "0")
+            @Min(
+                    value = 0,
+                    message = "Page must be zero or greater"
+            )
             int page,
 
             @RequestParam(defaultValue = "10")
+            @Min(
+                    value = 1,
+                    message = "Size must be at least 1"
+            )
+            @Max(
+                    value = 100,
+                    message = "Size must not exceed 100"
+            )
             int size
     ) {
 
-        int safePage = Math.max(page, 0);
-
-        int safeSize = Math.min(
-                Math.max(size, 1),
-                100
-        );
-
         Pageable pageable = PageRequest.of(
-                safePage,
-                safeSize,
+                page,
+                size,
                 Sort.by(
                         Sort.Direction.DESC,
                         "expenseDate"

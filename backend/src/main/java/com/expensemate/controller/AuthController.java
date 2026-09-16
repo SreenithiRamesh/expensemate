@@ -10,9 +10,10 @@ import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import java.util.Map;
 
+@SecurityRequirements
 @RestController
 @RequestMapping("/api/v1/auth")
 public class AuthController {

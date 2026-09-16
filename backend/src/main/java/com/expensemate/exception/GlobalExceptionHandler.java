@@ -2,13 +2,17 @@ package com.expensemate.exception;
 
 import com.expensemate.dto.ApiErrorResponse;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -16,6 +20,9 @@ import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log =
+            LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     @ExceptionHandler(EmailAlreadyExistsException.class)
     public ResponseEntity<ApiErrorResponse> handleEmailAlreadyExists(
@@ -182,7 +189,7 @@ public class GlobalExceptionHandler {
     }
 
     // ============================================================
-    // VALIDATION
+    // REQUEST BODY VALIDATION
     // ============================================================
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
@@ -216,6 +223,59 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
+    // ============================================================
+    // METHOD / QUERY PARAMETER VALIDATION
+    // Examples: page < 0, size < 1, size > 100
+    // ============================================================
+
+    @ExceptionHandler(HandlerMethodValidationException.class)
+    public ResponseEntity<ApiErrorResponse> handleMethodValidation(
+            HandlerMethodValidationException exception,
+            HttpServletRequest request
+    ) {
+
+        Map<String, String> validationErrors = new HashMap<>();
+
+        exception.getParameterValidationResults()
+                .forEach(result -> {
+
+                    String parameterName =
+                            result.getMethodParameter()
+                                    .getParameterName();
+
+                    if (parameterName == null) {
+                        parameterName = "parameter";
+                    }
+
+                    String finalParameterName = parameterName;
+
+                    result.getResolvableErrors()
+                            .forEach(error ->
+                                    validationErrors.put(
+                                            finalParameterName,
+                                            error.getDefaultMessage()
+                                    )
+                            );
+                });
+
+        ApiErrorResponse response = new ApiErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                "Validation failed",
+                request.getRequestURI(),
+                validationErrors
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(response);
+    }
+
+    // ============================================================
+    // MALFORMED JSON / INVALID ENUM VALUES IN REQUEST BODY
+    // ============================================================
+
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiErrorResponse> handleHttpMessageNotReadable(
             HttpMessageNotReadableException exception,
@@ -236,14 +296,21 @@ public class GlobalExceptionHandler {
                 .body(response);
     }
 
+    // ============================================================
+    // INVALID PATH / QUERY PARAMETER TYPES
+    // Examples: invalid enum, invalid date, text instead of number
+    // ============================================================
+
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<ApiErrorResponse> handleMethodArgumentTypeMismatch(
             MethodArgumentTypeMismatchException exception,
             HttpServletRequest request
     ) {
 
-        String message = "Invalid value for parameter '" +
-                exception.getName() + "'";
+        String message =
+                "Invalid value for parameter '" +
+                        exception.getName() +
+                        "'";
 
         ApiErrorResponse response = new ApiErrorResponse(
                 LocalDateTime.now(),
@@ -260,8 +327,32 @@ public class GlobalExceptionHandler {
     }
 
     // ============================================================
+    // UNKNOWN ROUTES / STATIC RESOURCES
+    // ============================================================
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiErrorResponse> handleNoResourceFound(
+            NoResourceFoundException exception,
+            HttpServletRequest request
+    ) {
+
+        ApiErrorResponse response = new ApiErrorResponse(
+                LocalDateTime.now(),
+                HttpStatus.NOT_FOUND.value(),
+                HttpStatus.NOT_FOUND.getReasonPhrase(),
+                "Resource not found",
+                request.getRequestURI(),
+                null
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.NOT_FOUND)
+                .body(response);
+    }
+
+    // ============================================================
     // FALLBACK
-    // Keep this handler last because it catches all other errors.
+    // Never expose internal exception details to API clients.
     // ============================================================
 
     @ExceptionHandler(Exception.class)
@@ -269,6 +360,14 @@ public class GlobalExceptionHandler {
             Exception exception,
             HttpServletRequest request
     ) {
+
+        log.error(
+                "Unhandled exception while processing {} {}. Exception={}",
+                request.getMethod(),
+                request.getRequestURI(),
+                exception.getClass().getSimpleName(),
+                exception
+        );
 
         ApiErrorResponse response = new ApiErrorResponse(
                 LocalDateTime.now(),
