@@ -7,7 +7,6 @@ import com.expensemate.dto.settlement.SettlementResponse;
 import com.expensemate.entity.ExpenseGroup;
 import com.expensemate.entity.Settlement;
 import com.expensemate.entity.User;
-import com.expensemate.enums.ActivityType;
 import com.expensemate.enums.SettlementMode;
 import com.expensemate.exception.InvalidRequestException;
 import com.expensemate.exception.ResourceNotFoundException;
@@ -15,6 +14,7 @@ import com.expensemate.repository.ExpenseGroupRepository;
 import com.expensemate.repository.GroupMemberRepository;
 import com.expensemate.repository.SettlementRepository;
 import com.expensemate.repository.UserRepository;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,9 +30,7 @@ public class SettlementService {
     private final ExpenseGroupRepository expenseGroupRepository;
     private final GroupMemberRepository groupMemberRepository;
     private final DebtSimplificationService debtSimplificationService;
-
-    // M13
-    private final ActivityService activityService;
+    private final SettlementWriteService settlementWriteService;
 
     public SettlementService(
             SettlementRepository settlementRepository,
@@ -40,17 +38,23 @@ public class SettlementService {
             ExpenseGroupRepository expenseGroupRepository,
             GroupMemberRepository groupMemberRepository,
             DebtSimplificationService debtSimplificationService,
-            ActivityService activityService
+            SettlementWriteService settlementWriteService
     ) {
         this.settlementRepository = settlementRepository;
         this.userRepository = userRepository;
         this.expenseGroupRepository = expenseGroupRepository;
         this.groupMemberRepository = groupMemberRepository;
         this.debtSimplificationService = debtSimplificationService;
-        this.activityService = activityService;
+        this.settlementWriteService = settlementWriteService;
     }
 
-    @Transactional
+    /*
+     * Do not place @Transactional on this orchestration method.
+     *
+     * SettlementWriteService owns the write transaction. Therefore,
+     * after a losing concurrent transaction rolls back, this method
+     * can perform a clean recovery query for the winning settlement.
+     */
     public SettlementResponse createSettlement(
             Long groupId,
             String email,
@@ -58,43 +62,28 @@ public class SettlementService {
             SettlementCreateRequest request
     ) {
 
-        validateIdempotencyKey(idempotencyKey);
+        validateIdempotencyKey(
+                idempotencyKey
+        );
 
-        User currentUser = getCurrentUser(email);
+        User currentUser =
+                getCurrentUser(
+                        email
+                );
 
-        /*
-         * Idempotency check happens BEFORE creating anything.
-         *
-         * Therefore retrying the same request:
-         * - does not create another settlement
-         * - does not create another activity entry
-         */
         Settlement existingSettlement =
                 settlementRepository
-                        .findByIdempotencyKey(idempotencyKey)
+                        .findByIdempotencyKey(
+                                idempotencyKey
+                        )
                         .orElse(null);
 
         if (existingSettlement != null) {
-
-            boolean sameUser =
-                    existingSettlement
-                            .getFromUser()
-                            .getId()
-                            .equals(currentUser.getId());
-
-            boolean sameGroup =
-                    existingSettlement
-                            .getGroup()
-                            .getId()
-                            .equals(groupId);
-
-            if (!sameUser || !sameGroup) {
-                throw new InvalidRequestException(
-                        "Idempotency key has already been used"
-                );
-            }
-
-            return toResponse(existingSettlement);
+            return handleExistingSettlement(
+                    existingSettlement,
+                    currentUser,
+                    groupId
+            );
         }
 
         ExpenseGroup group =
@@ -103,15 +92,20 @@ public class SettlementService {
                         currentUser
                 );
 
-        validateRequest(request);
+        validateRequest(
+                request
+        );
 
         User receiver =
                 userRepository
-                        .findById(request.toUserId())
+                        .findById(
+                                request.toUserId()
+                        )
                         .orElseThrow(
-                                () -> new ResourceNotFoundException(
-                                        "User not found"
-                                )
+                                () ->
+                                        new ResourceNotFoundException(
+                                                "User not found"
+                                        )
                         );
 
         boolean receiverIsMember =
@@ -129,7 +123,9 @@ public class SettlementService {
 
         if (currentUser
                 .getId()
-                .equals(receiver.getId())) {
+                .equals(
+                        receiver.getId()
+                )) {
 
             throw new InvalidRequestException(
                     "You cannot settle debt with yourself"
@@ -150,42 +146,46 @@ public class SettlementService {
                         currentDebt.amount()
                 );
 
-        Settlement settlement =
-                new Settlement(
-                        group,
-                        currentUser,
-                        receiver,
-                        settlementAmount,
-                        request.mode(),
-                        idempotencyKey,
-                        currentUser
-                );
+        try {
 
-        Settlement savedSettlement =
-                settlementRepository.save(settlement);
+            Settlement savedSettlement =
+                    settlementWriteService.create(
+                            group,
+                            currentUser,
+                            receiver,
+                            settlementAmount,
+                            request.mode(),
+                            idempotencyKey
+                    );
 
-        /*
-         * M13 — Activity / Audit History
-         *
-         * This runs inside the same transaction.
-         * If activity persistence fails, the settlement
-         * transaction also rolls back.
-         */
-        activityService.record(
-                group,
-                currentUser,
-                ActivityType.SETTLEMENT_CREATED,
-                currentUser.getName()
-                        + " settled ₹"
-                        + savedSettlement
-                        .getAmount()
-                        .toPlainString()
-                        + " with "
-                        + receiver.getName(),
-                savedSettlement.getId()
-        );
+            return toResponse(
+                    savedSettlement
+            );
 
-        return toResponse(savedSettlement);
+        } catch (DataIntegrityViolationException exception) {
+
+            /*
+             * A concurrent request may have committed the same
+             * idempotency key between our initial lookup and insert.
+             *
+             * The losing write transaction has already rolled back,
+             * so it is now safe to query the committed winner.
+             */
+            Settlement winningSettlement =
+                    settlementRepository
+                            .findByIdempotencyKey(
+                                    idempotencyKey
+                            )
+                            .orElseThrow(
+                                    () -> exception
+                            );
+
+            return handleExistingSettlement(
+                    winningSettlement,
+                    currentUser,
+                    groupId
+            );
+        }
     }
 
     @Transactional(readOnly = true)
@@ -195,7 +195,9 @@ public class SettlementService {
     ) {
 
         User currentUser =
-                getCurrentUser(email);
+                getCurrentUser(
+                        email
+                );
 
         getAccessibleGroup(
                 groupId,
@@ -203,7 +205,9 @@ public class SettlementService {
         );
 
         return settlementRepository
-                .findByGroup_IdOrderBySettledAtDesc(groupId)
+                .findByGroup_IdOrderBySettledAtDesc(
+                        groupId
+                )
                 .stream()
                 .map(this::toResponse)
                 .toList();
@@ -217,7 +221,9 @@ public class SettlementService {
     ) {
 
         User currentUser =
-                getCurrentUser(email);
+                getCurrentUser(
+                        email
+                );
 
         getAccessibleGroup(
                 groupId,
@@ -237,7 +243,42 @@ public class SettlementService {
                                         )
                         );
 
-        return toResponse(settlement);
+        return toResponse(
+                settlement
+        );
+    }
+
+    private SettlementResponse handleExistingSettlement(
+            Settlement existingSettlement,
+            User currentUser,
+            Long groupId
+    ) {
+
+        boolean sameUser =
+                existingSettlement
+                        .getFromUser()
+                        .getId()
+                        .equals(
+                                currentUser.getId()
+                        );
+
+        boolean sameGroup =
+                existingSettlement
+                        .getGroup()
+                        .getId()
+                        .equals(
+                                groupId
+                        );
+
+        if (!sameUser || !sameGroup) {
+            throw new InvalidRequestException(
+                    "Idempotency key has already been used"
+            );
+        }
+
+        return toResponse(
+                existingSettlement
+        );
     }
 
     private User getCurrentUser(
@@ -245,7 +286,9 @@ public class SettlementService {
     ) {
 
         return userRepository
-                .findByEmail(email)
+                .findByEmail(
+                        email
+                )
                 .orElseThrow(
                         () ->
                                 new ResourceNotFoundException(
@@ -261,7 +304,9 @@ public class SettlementService {
 
         ExpenseGroup group =
                 expenseGroupRepository
-                        .findById(groupId)
+                        .findById(
+                                groupId
+                        )
                         .orElseThrow(
                                 () ->
                                         new ResourceNotFoundException(
@@ -276,11 +321,6 @@ public class SettlementService {
                                 currentUser.getId()
                         );
 
-        /*
-         * We intentionally return "Group not found"
-         * for a non-member instead of revealing that
-         * the group exists.
-         */
         if (!member) {
             throw new ResourceNotFoundException(
                     "Group not found"
@@ -311,11 +351,15 @@ public class SettlementService {
                         settlement ->
                                 settlement
                                         .fromUserId()
-                                        .equals(fromUserId)
+                                        .equals(
+                                                fromUserId
+                                        )
                                         &&
                                         settlement
                                                 .toUserId()
-                                                .equals(toUserId)
+                                                .equals(
+                                                        toUserId
+                                                )
                 )
                 .findFirst()
                 .orElseThrow(
@@ -332,7 +376,9 @@ public class SettlementService {
     ) {
 
         BigDecimal outstanding =
-                normalize(outstandingAmount);
+                normalize(
+                        outstandingAmount
+                );
 
         if (request.mode() == SettlementMode.FULL) {
             return outstanding;
@@ -347,7 +393,9 @@ public class SettlementService {
             }
 
             BigDecimal partialAmount =
-                    normalize(request.amount());
+                    normalize(
+                            request.amount()
+                    );
 
             if (partialAmount.compareTo(
                     BigDecimal.ZERO
@@ -397,10 +445,6 @@ public class SettlementService {
             );
         }
 
-        /*
-         * FULL settlement amount is calculated by
-         * the backend from the current outstanding debt.
-         */
         if (request.mode() == SettlementMode.FULL
                 && request.amount() != null) {
 

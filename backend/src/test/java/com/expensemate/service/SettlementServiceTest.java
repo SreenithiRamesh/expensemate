@@ -7,7 +7,6 @@ import com.expensemate.dto.settlement.SettlementResponse;
 import com.expensemate.entity.ExpenseGroup;
 import com.expensemate.entity.Settlement;
 import com.expensemate.entity.User;
-import com.expensemate.enums.ActivityType;
 import com.expensemate.enums.SettlementMode;
 import com.expensemate.exception.InvalidRequestException;
 import com.expensemate.repository.ExpenseGroupRepository;
@@ -19,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -47,9 +47,8 @@ class SettlementServiceTest {
     @Mock
     private DebtSimplificationService debtSimplificationService;
 
-    // M13
     @Mock
-    private ActivityService activityService;
+    private SettlementWriteService settlementWriteService;
 
     private SettlementService service;
 
@@ -62,7 +61,7 @@ class SettlementServiceTest {
                 expenseGroupRepository,
                 groupMemberRepository,
                 debtSimplificationService,
-                activityService
+                settlementWriteService
         );
     }
 
@@ -106,14 +105,7 @@ class SettlementServiceTest {
                 )
         );
 
-        when(
-                settlementRepository.save(
-                        any(Settlement.class)
-                )
-        ).thenAnswer(
-                invocation ->
-                        invocation.getArgument(0)
-        );
+        prepareSuccessfulWrite();
 
         SettlementCreateRequest request =
                 new SettlementCreateRequest(
@@ -156,19 +148,14 @@ class SettlementServiceTest {
         );
 
         verify(
-                settlementRepository
-        ).save(
-                any(Settlement.class)
-        );
-
-        verify(
-                activityService
-        ).record(
+                settlementWriteService
+        ).create(
                 eq(group),
                 eq(debtor),
-                eq(ActivityType.SETTLEMENT_CREATED),
-                contains("settled"),
-                isNull()
+                eq(creditor),
+                eq(new BigDecimal("800.00")),
+                eq(SettlementMode.FULL),
+                eq("full-key-1")
         );
     }
 
@@ -212,14 +199,7 @@ class SettlementServiceTest {
                 )
         );
 
-        when(
-                settlementRepository.save(
-                        any(Settlement.class)
-                )
-        ).thenAnswer(
-                invocation ->
-                        invocation.getArgument(0)
-        );
+        prepareSuccessfulWrite();
 
         SettlementCreateRequest request =
                 new SettlementCreateRequest(
@@ -249,19 +229,299 @@ class SettlementServiceTest {
         );
 
         verify(
+                settlementWriteService
+        ).create(
+                eq(group),
+                eq(debtor),
+                eq(creditor),
+                eq(new BigDecimal("300.00")),
+                eq(SettlementMode.PARTIAL),
+                eq("partial-key-1")
+        );
+    }
+
+    @Test
+    void shouldRecoverWhenConcurrentRequestUsesSameIdempotencyKey() {
+
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
+
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        Settlement winningSettlement =
+                settlement(
+                        50L,
+                        group,
+                        debtor,
+                        creditor,
+                        "300.00",
+                        SettlementMode.PARTIAL
+                );
+
+        when(
+                userRepository.findByEmail(
+                        "test@example.com"
+                )
+        ).thenReturn(
+                Optional.of(
+                        debtor
+                )
+        );
+
+        /*
+         * First query occurs before writing and returns empty.
+         * Second query occurs after the unique-key collision
+         * and returns the settlement committed by the winner.
+         */
+        when(
                 settlementRepository
-        ).save(
-                any(Settlement.class)
+                        .findByIdempotencyKey(
+                                "concurrent-key"
+                        )
+        ).thenReturn(
+                Optional.empty(),
+                Optional.of(
+                        winningSettlement
+                )
+        );
+
+        when(
+                expenseGroupRepository.findById(
+                        2L
+                )
+        ).thenReturn(
+                Optional.of(
+                        group
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                2L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        when(
+                userRepository.findById(
+                        1L
+                )
+        ).thenReturn(
+                Optional.of(
+                        creditor
+                )
+        );
+
+        when(
+                groupMemberRepository
+                        .existsByGroupIdAndUserId(
+                                2L,
+                                1L
+                        )
+        ).thenReturn(
+                true
+        );
+
+        when(
+                debtSimplificationService
+                        .simplifyGroupDebt(
+                                2L,
+                                "test@example.com"
+                        )
+        ).thenReturn(
+                debtResponse(
+                        "800.00"
+                )
+        );
+
+        when(
+                settlementWriteService.create(
+                        any(ExpenseGroup.class),
+                        any(User.class),
+                        any(User.class),
+                        any(BigDecimal.class),
+                        any(SettlementMode.class),
+                        anyString()
+                )
+        ).thenThrow(
+                new DataIntegrityViolationException(
+                        "Duplicate idempotency key"
+                )
+        );
+
+        SettlementCreateRequest request =
+                new SettlementCreateRequest(
+                        1L,
+                        SettlementMode.PARTIAL,
+                        new BigDecimal(
+                                "300.00"
+                        )
+                );
+
+        SettlementResponse response =
+                service.createSettlement(
+                        2L,
+                        "test@example.com",
+                        "concurrent-key",
+                        request
+                );
+
+        assertEquals(
+                50L,
+                response.id()
+        );
+
+        assertEquals(
+                2L,
+                response.groupId()
+        );
+
+        assertEquals(
+                2L,
+                response.fromUserId()
+        );
+
+        assertEquals(
+                1L,
+                response.toUserId()
+        );
+
+        assertMoney(
+                "300.00",
+                response.amount()
+        );
+
+        assertEquals(
+                SettlementMode.PARTIAL,
+                response.mode()
         );
 
         verify(
-                activityService
-        ).record(
-                eq(group),
-                eq(debtor),
-                eq(ActivityType.SETTLEMENT_CREATED),
-                contains("300.00"),
-                isNull()
+                settlementRepository,
+                times(2)
+        ).findByIdempotencyKey(
+                "concurrent-key"
+        );
+    }
+
+    @Test
+    void shouldRethrowConstraintFailureWhenWinnerCannotBeFound() {
+
+        User debtor =
+                user(
+                        2L,
+                        "Test User"
+                );
+
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        prepareValidGroup(
+                debtor,
+                creditor,
+                group,
+                "test@example.com",
+                "missing-winner-key"
+        );
+
+        /*
+         * Override the helper's single empty result with two
+         * empty results: one before writing and one during recovery.
+         */
+        when(
+                settlementRepository
+                        .findByIdempotencyKey(
+                                "missing-winner-key"
+                        )
+        ).thenReturn(
+                Optional.empty(),
+                Optional.empty()
+        );
+
+        when(
+                debtSimplificationService
+                        .simplifyGroupDebt(
+                                2L,
+                                "test@example.com"
+                        )
+        ).thenReturn(
+                debtResponse(
+                        "800.00"
+                )
+        );
+
+        DataIntegrityViolationException databaseException =
+                new DataIntegrityViolationException(
+                        "Unexpected database constraint failure"
+                );
+
+        when(
+                settlementWriteService.create(
+                        any(ExpenseGroup.class),
+                        any(User.class),
+                        any(User.class),
+                        any(BigDecimal.class),
+                        any(SettlementMode.class),
+                        anyString()
+                )
+        ).thenThrow(
+                databaseException
+        );
+
+        SettlementCreateRequest request =
+                new SettlementCreateRequest(
+                        1L,
+                        SettlementMode.PARTIAL,
+                        new BigDecimal(
+                                "300.00"
+                        )
+                );
+
+        DataIntegrityViolationException thrown =
+                assertThrows(
+                        DataIntegrityViolationException.class,
+                        () ->
+                                service.createSettlement(
+                                        2L,
+                                        "test@example.com",
+                                        "missing-winner-key",
+                                        request
+                                )
+                );
+
+        assertSame(
+                databaseException,
+                thrown
+        );
+
+        verify(
+                settlementRepository,
+                times(2)
+        ).findByIdempotencyKey(
+                "missing-winner-key"
         );
     }
 
@@ -331,15 +591,8 @@ class SettlementServiceTest {
                 exception.getMessage()
         );
 
-        verify(
-                settlementRepository,
-                never()
-        ).save(
-                any(Settlement.class)
-        );
-
         verifyNoInteractions(
-                activityService
+                settlementWriteService
         );
     }
 
@@ -407,15 +660,8 @@ class SettlementServiceTest {
                 exception.getMessage()
         );
 
-        verify(
-                settlementRepository,
-                never()
-        ).save(
-                any(Settlement.class)
-        );
-
         verifyNoInteractions(
-                activityService
+                settlementWriteService
         );
     }
 
@@ -485,15 +731,8 @@ class SettlementServiceTest {
                 exception.getMessage()
         );
 
-        verify(
-                settlementRepository,
-                never()
-        ).save(
-                any(Settlement.class)
-        );
-
         verifyNoInteractions(
-                activityService
+                settlementWriteService
         );
     }
 
@@ -531,10 +770,9 @@ class SettlementServiceTest {
         );
 
         when(
-                expenseGroupRepository
-                        .findById(
-                                2L
-                        )
+                expenseGroupRepository.findById(
+                        2L
+                )
         ).thenReturn(
                 Optional.of(
                         group
@@ -586,11 +824,8 @@ class SettlementServiceTest {
         );
 
         verifyNoInteractions(
-                debtSimplificationService
-        );
-
-        verifyNoInteractions(
-                activityService
+                debtSimplificationService,
+                settlementWriteService
         );
     }
 
@@ -661,15 +896,8 @@ class SettlementServiceTest {
                 exception.getMessage()
         );
 
-        verify(
-                settlementRepository,
-                never()
-        ).save(
-                any(Settlement.class)
-        );
-
         verifyNoInteractions(
-                activityService
+                settlementWriteService
         );
     }
 
@@ -694,70 +922,19 @@ class SettlementServiceTest {
                 );
 
         Settlement existingSettlement =
-                mock(Settlement.class);
+                settlement(
+                        10L,
+                        group,
+                        debtor,
+                        creditor,
+                        "300.00",
+                        SettlementMode.PARTIAL
+                );
 
         when(
-                existingSettlement
-                        .getGroup()
-        ).thenReturn(
-                group
-        );
-
-        when(
-                existingSettlement
-                        .getFromUser()
-        ).thenReturn(
-                debtor
-        );
-
-        when(
-                existingSettlement
-                        .getToUser()
-        ).thenReturn(
-                creditor
-        );
-
-        when(
-                existingSettlement
-                        .getAmount()
-        ).thenReturn(
-                new BigDecimal(
-                        "300.00"
+                userRepository.findByEmail(
+                        "test@example.com"
                 )
-        );
-
-        when(
-                existingSettlement
-                        .getSettlementMode()
-        ).thenReturn(
-                SettlementMode.PARTIAL
-        );
-
-        when(
-                existingSettlement
-                        .getId()
-        ).thenReturn(
-                10L
-        );
-
-        when(
-                existingSettlement
-                        .getSettledAt()
-        ).thenReturn(
-                LocalDateTime.of(
-                        2026,
-                        9,
-                        15,
-                        0,
-                        30
-                )
-        );
-
-        when(
-                userRepository
-                        .findByEmail(
-                                "test@example.com"
-                        )
         ).thenReturn(
                 Optional.of(
                         debtor
@@ -802,24 +979,100 @@ class SettlementServiceTest {
                 response.amount()
         );
 
-        verify(
-                settlementRepository,
-                never()
-        ).save(
-                any(Settlement.class)
+        verifyNoInteractions(
+                expenseGroupRepository,
+                groupMemberRepository,
+                debtSimplificationService,
+                settlementWriteService
+        );
+    }
+
+    @Test
+    void shouldRejectIdempotencyKeyUsedByDifferentUser() {
+
+        User currentUser =
+                user(
+                        3L,
+                        "Another User"
+                );
+
+        User originalDebtor =
+                user(
+                        2L,
+                        "Test User"
+                );
+
+        User creditor =
+                user(
+                        1L,
+                        "Sree"
+                );
+
+        ExpenseGroup group =
+                group(
+                        2L
+                );
+
+        Settlement existingSettlement =
+                settlement(
+                        10L,
+                        group,
+                        originalDebtor,
+                        creditor,
+                        "300.00",
+                        SettlementMode.PARTIAL
+                );
+
+        when(
+                userRepository.findByEmail(
+                        "another@example.com"
+                )
+        ).thenReturn(
+                Optional.of(
+                        currentUser
+                )
+        );
+
+        when(
+                settlementRepository
+                        .findByIdempotencyKey(
+                                "used-key"
+                        )
+        ).thenReturn(
+                Optional.of(
+                        existingSettlement
+                )
+        );
+
+        SettlementCreateRequest request =
+                new SettlementCreateRequest(
+                        1L,
+                        SettlementMode.PARTIAL,
+                        new BigDecimal(
+                                "300.00"
+                        )
+                );
+
+        InvalidRequestException exception =
+                assertThrows(
+                        InvalidRequestException.class,
+                        () ->
+                                service.createSettlement(
+                                        2L,
+                                        "another@example.com",
+                                        "used-key",
+                                        request
+                                )
+                );
+
+        assertEquals(
+                "Idempotency key has already been used",
+                exception.getMessage()
         );
 
         verifyNoInteractions(
-                debtSimplificationService
-        );
-
-        /*
-         * Very important M13 test:
-         * idempotent retry must NOT duplicate
-         * the activity/audit record.
-         */
-        verifyNoInteractions(
-                activityService
+                debtSimplificationService,
+                settlementWriteService
         );
     }
 
@@ -856,7 +1109,49 @@ class SettlementServiceTest {
                 expenseGroupRepository,
                 groupMemberRepository,
                 debtSimplificationService,
-                activityService
+                settlementWriteService
+        );
+    }
+
+    @Test
+    void shouldRejectIdempotencyKeyLongerThanOneHundredCharacters() {
+
+        String idempotencyKey =
+                "a".repeat(
+                        101
+                );
+
+        SettlementCreateRequest request =
+                new SettlementCreateRequest(
+                        1L,
+                        SettlementMode.FULL,
+                        null
+                );
+
+        InvalidRequestException exception =
+                assertThrows(
+                        InvalidRequestException.class,
+                        () ->
+                                service.createSettlement(
+                                        2L,
+                                        "test@example.com",
+                                        idempotencyKey,
+                                        request
+                                )
+                );
+
+        assertEquals(
+                "Idempotency-Key must not exceed 100 characters",
+                exception.getMessage()
+        );
+
+        verifyNoInteractions(
+                settlementRepository,
+                userRepository,
+                expenseGroupRepository,
+                groupMemberRepository,
+                debtSimplificationService,
+                settlementWriteService
         );
     }
 
@@ -881,10 +1176,9 @@ class SettlementServiceTest {
                 );
 
         when(
-                userRepository
-                        .findByEmail(
-                                "test@example.com"
-                        )
+                userRepository.findByEmail(
+                        "test@example.com"
+                )
         ).thenReturn(
                 Optional.of(
                         debtor
@@ -892,10 +1186,9 @@ class SettlementServiceTest {
         );
 
         when(
-                expenseGroupRepository
-                        .findById(
-                                2L
-                        )
+                expenseGroupRepository.findById(
+                        2L
+                )
         ).thenReturn(
                 Optional.of(
                         group
@@ -913,57 +1206,14 @@ class SettlementServiceTest {
         );
 
         Settlement settlement =
-                mock(Settlement.class);
-
-        when(
-                settlement.getId()
-        ).thenReturn(
-                10L
-        );
-
-        when(
-                settlement.getGroup()
-        ).thenReturn(
-                group
-        );
-
-        when(
-                settlement.getFromUser()
-        ).thenReturn(
-                debtor
-        );
-
-        when(
-                settlement.getToUser()
-        ).thenReturn(
-                creditor
-        );
-
-        when(
-                settlement.getAmount()
-        ).thenReturn(
-                new BigDecimal(
-                        "300.00"
-                )
-        );
-
-        when(
-                settlement.getSettlementMode()
-        ).thenReturn(
-                SettlementMode.PARTIAL
-        );
-
-        when(
-                settlement.getSettledAt()
-        ).thenReturn(
-                LocalDateTime.of(
-                        2026,
-                        9,
-                        15,
-                        0,
-                        30
-                )
-        );
+                settlement(
+                        10L,
+                        group,
+                        debtor,
+                        creditor,
+                        "300.00",
+                        SettlementMode.PARTIAL
+                );
 
         when(
                 settlementRepository
@@ -1026,10 +1276,9 @@ class SettlementServiceTest {
     ) {
 
         when(
-                userRepository
-                        .findByEmail(
-                                email
-                        )
+                userRepository.findByEmail(
+                        email
+                )
         ).thenReturn(
                 Optional.of(
                         debtor
@@ -1046,10 +1295,9 @@ class SettlementServiceTest {
         );
 
         when(
-                expenseGroupRepository
-                        .findById(
-                                2L
-                        )
+                expenseGroupRepository.findById(
+                        2L
+                )
         ).thenReturn(
                 Optional.of(
                         group
@@ -1067,10 +1315,9 @@ class SettlementServiceTest {
         );
 
         when(
-                userRepository
-                        .findById(
-                                creditor.getId()
-                        )
+                userRepository.findById(
+                        creditor.getId()
+                )
         ).thenReturn(
                 Optional.of(
                         creditor
@@ -1085,6 +1332,31 @@ class SettlementServiceTest {
                         )
         ).thenReturn(
                 true
+        );
+    }
+
+    private void prepareSuccessfulWrite() {
+
+        when(
+                settlementWriteService.create(
+                        any(ExpenseGroup.class),
+                        any(User.class),
+                        any(User.class),
+                        any(BigDecimal.class),
+                        any(SettlementMode.class),
+                        anyString()
+                )
+        ).thenAnswer(
+                invocation ->
+                        new Settlement(
+                                invocation.getArgument(0),
+                                invocation.getArgument(1),
+                                invocation.getArgument(2),
+                                invocation.getArgument(3),
+                                invocation.getArgument(4),
+                                invocation.getArgument(5),
+                                invocation.getArgument(1)
+                        )
         );
     }
 
@@ -1110,18 +1382,97 @@ class SettlementServiceTest {
         );
     }
 
+    private Settlement settlement(
+            Long id,
+            ExpenseGroup group,
+            User fromUser,
+            User toUser,
+            String amount,
+            SettlementMode mode
+    ) {
+
+        Settlement settlement =
+                mock(
+                        Settlement.class
+                );
+
+        lenient()
+                .when(
+                        settlement.getId()
+                )
+                .thenReturn(
+                        id
+                );
+
+        lenient()
+                .when(
+                        settlement.getGroup()
+                )
+                .thenReturn(
+                        group
+                );
+
+        lenient()
+                .when(
+                        settlement.getFromUser()
+                )
+                .thenReturn(
+                        fromUser
+                );
+
+        lenient()
+                .when(
+                        settlement.getToUser()
+                )
+                .thenReturn(
+                        toUser
+                );
+
+        lenient()
+                .when(
+                        settlement.getAmount()
+                )
+                .thenReturn(
+                        new BigDecimal(
+                                amount
+                        )
+                );
+
+        lenient()
+                .when(
+                        settlement.getSettlementMode()
+                )
+                .thenReturn(
+                        mode
+                );
+
+        lenient()
+                .when(
+                        settlement.getSettledAt()
+                )
+                .thenReturn(
+                        LocalDateTime.of(
+                                2026,
+                                9,
+                                15,
+                                0,
+                                30
+                        )
+                );
+
+        return settlement;
+    }
+
     private User user(
             Long id,
             String name
     ) {
 
         User user =
-                mock(User.class);
+                mock(
+                        User.class
+                );
 
-        /*
-         * lenient because helper-created mocks are reused
-         * across tests and not every test reads every field.
-         */
         lenient()
                 .when(
                         user.getId()
@@ -1146,7 +1497,9 @@ class SettlementServiceTest {
     ) {
 
         ExpenseGroup group =
-                mock(ExpenseGroup.class);
+                mock(
+                        ExpenseGroup.class
+                );
 
         lenient()
                 .when(
