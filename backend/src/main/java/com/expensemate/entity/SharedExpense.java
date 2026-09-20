@@ -23,6 +23,42 @@ public class SharedExpense {
     @JoinColumn(name = "paid_by", nullable = false)
     private User paidBy;
 
+    /*
+     * M23 — authenticated user who actually created
+     * the shared expense.
+     *
+     * This is intentionally separate from paidBy because
+     * a group member may record an expense paid by another
+     * member.
+     *
+     * Nullable at the database/entity level so historical
+     * pre-M23 rows remain valid.
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "created_by")
+    private User createdBy;
+
+    /*
+     * M23 — client supplied idempotency key.
+     *
+     * Together with createdBy, the database UNIQUE
+     * constraint prevents duplicate financial writes
+     * for the same authenticated user.
+     */
+    @Column(name = "idempotency_key", length = 100)
+    private String idempotencyKey;
+
+    /*
+     * SHA-256 fingerprint of the logical create request.
+     *
+     * It allows us to distinguish:
+     *
+     * same key + same request      -> safe replay
+     * same key + different request -> reject
+     */
+    @Column(name = "request_fingerprint", length = 64)
+    private String requestFingerprint;
+
     @Column(nullable = false, length = 150)
     private String title;
 
@@ -48,17 +84,23 @@ public class SharedExpense {
     public SharedExpense(
             ExpenseGroup group,
             User paidBy,
+            User createdBy,
             String title,
             BigDecimal amount,
             SplitType splitType,
-            LocalDate expenseDate
+            LocalDate expenseDate,
+            String idempotencyKey,
+            String requestFingerprint
     ) {
         this.group = group;
         this.paidBy = paidBy;
+        this.createdBy = createdBy;
         this.title = title;
         this.amount = amount;
         this.splitType = splitType;
         this.expenseDate = expenseDate;
+        this.idempotencyKey = idempotencyKey;
+        this.requestFingerprint = requestFingerprint;
     }
 
     @PrePersist
@@ -83,6 +125,18 @@ public class SharedExpense {
 
     public User getPaidBy() {
         return paidBy;
+    }
+
+    public User getCreatedBy() {
+        return createdBy;
+    }
+
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public String getRequestFingerprint() {
+        return requestFingerprint;
     }
 
     public String getTitle() {

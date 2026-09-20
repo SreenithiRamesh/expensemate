@@ -27,15 +27,25 @@ public class SharedExpenseController {
     public ResponseEntity<SharedExpenseResponse>
     createSharedExpense(
             @PathVariable Long groupId,
+
+            @RequestHeader(
+                    value = "Idempotency-Key",
+                    required = false
+            )
+            String idempotencyKey,
+
             @Valid
             @RequestBody SharedExpenseCreateRequest request,
+
             Authentication authentication
     ) {
+
         SharedExpenseResponse response =
                 sharedExpenseService
                         .createSharedExpense(
                                 groupId,
                                 authentication.getName(),
+                                idempotencyKey,
                                 request
                         );
 
@@ -50,6 +60,7 @@ public class SharedExpenseController {
             @PathVariable Long groupId,
             Authentication authentication
     ) {
+
         List<SharedExpenseResponse> response =
                 sharedExpenseService
                         .getGroupExpenses(
@@ -67,6 +78,7 @@ public class SharedExpenseController {
             @PathVariable Long expenseId,
             Authentication authentication
     ) {
+
         SharedExpenseResponse response =
                 sharedExpenseService
                         .getSharedExpense(
