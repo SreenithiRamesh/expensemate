@@ -1,5 +1,8 @@
 package com.expensemate.dto;
 
+import com.expensemate.observability.CorrelationIdConstants;
+import org.slf4j.MDC;
+
 import java.time.LocalDateTime;
 import java.util.Map;
 
@@ -11,6 +14,7 @@ public class ApiErrorResponse {
     private String message;
     private String path;
     private Map<String, String> validationErrors;
+    private String correlationId;
 
     public ApiErrorResponse() {
     }
@@ -29,6 +33,8 @@ public class ApiErrorResponse {
         this.message = message;
         this.path = path;
         this.validationErrors = validationErrors;
+        this.correlationId =
+                MDC.get(CorrelationIdConstants.MDC_KEY);
     }
 
     public LocalDateTime getTimestamp() {
@@ -53,5 +59,9 @@ public class ApiErrorResponse {
 
     public Map<String, String> getValidationErrors() {
         return validationErrors;
+    }
+
+    public String getCorrelationId() {
+        return correlationId;
     }
 }

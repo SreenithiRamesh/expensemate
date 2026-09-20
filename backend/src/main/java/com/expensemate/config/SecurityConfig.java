@@ -119,6 +119,7 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/v1/health",
                                 "/api/v1/auth/**",
+                                "/actuator/health",
                                 "/v3/api-docs/**",
                                 "/v3/api-docs.yaml",
                                 "/swagger-ui/**",
@@ -187,7 +188,8 @@ public class SecurityConfig {
                 List.of(
                         "Authorization",
                         "Content-Type",
-                        "Idempotency-Key"
+                        "Idempotency-Key",
+                        "X-Correlation-ID"
                 )
         );
 
@@ -200,7 +202,8 @@ public class SecurityConfig {
         configuration.setExposedHeaders(
                 List.of(
                         "Location",
-                        "Retry-After"
+                        "Retry-After",
+                        "X-Correlation-ID"
                 )
         );
 
