@@ -14,11 +14,23 @@ import tools.jackson.databind.json.JsonMapper;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 class GeminiExpenseCategorizerTest {
+
+    private static final LocalDate REFERENCE_DATE =
+            LocalDate.of(2026, 9, 21);
 
     private GeminiProviderClient providerClient;
     private GeminiExpenseCategorizer categorizer;
@@ -50,14 +62,7 @@ class GeminiExpenseCategorizerTest {
     @Test
     void shouldReturnValidatedCategorizationWhenProviderResponseIsValid() {
 
-        when(
-                providerClient.generate(
-                        anyString(),
-                        anyString(),
-                        any(),
-                        anyInt()
-                )
-        ).thenReturn(
+        stubProviderResponse(
                 """
                 {
                   "amount": 250.00,
@@ -69,27 +74,28 @@ class GeminiExpenseCategorizerTest {
         );
 
         ExpenseCategorizationResult result =
-                categorizer.categorize(
-                        "Spent 250 for lunch",
-                        LocalDate.of(2026, 9, 21)
-                );
+                categorize();
 
         assertNotNull(result);
+
         assertEquals(
                 0,
                 new BigDecimal("250.00")
                         .compareTo(result.amount())
         );
+
         assertEquals(
                 ExpenseCategory.FOOD,
                 result.category()
         );
+
         assertEquals(
                 "Lunch",
                 result.description()
         );
+
         assertEquals(
-                LocalDate.of(2026, 9, 21),
+                REFERENCE_DATE,
                 result.expenseDate()
         );
 
@@ -107,53 +113,47 @@ class GeminiExpenseCategorizerTest {
     @Test
     void malformedJsonShouldFailWithoutRetry() {
 
-        when(
-                providerClient.generate(
-                        anyString(),
-                        anyString(),
-                        any(),
-                        anyInt()
-                )
-        ).thenReturn(
+        stubProviderResponse(
                 "{invalid-json"
         );
 
         AiServiceException exception =
-                assertThrows(
-                        AiServiceException.class,
-                        () -> categorizer.categorize(
-                                "Lunch 250",
-                                LocalDate.of(2026, 9, 21)
-                        )
-                );
+                assertCategorizationFails();
 
         assertEquals(
                 "AI categorization is temporarily unavailable",
                 exception.getMessage()
         );
 
-        verify(
-                providerClient,
-                times(1)
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void truncatedJsonShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": 250.00,
+                  "category":
+                """
         );
+
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
+        );
+
+        verifySingleProviderInvocation();
     }
 
     @Test
     void invalidCategoryShouldFailWithoutRetry() {
 
-        when(
-                providerClient.generate(
-                        anyString(),
-                        anyString(),
-                        any(),
-                        anyInt()
-                )
-        ).thenReturn(
+        stubProviderResponse(
                 """
                 {
                   "amount": 250.00,
@@ -164,54 +164,225 @@ class GeminiExpenseCategorizerTest {
                 """
         );
 
-        assertThrows(
-                AiServiceException.class,
-                () -> categorizer.categorize(
-                        "Lunch 250",
-                        LocalDate.of(2026, 9, 21)
-                )
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
         );
 
-        verify(
-                providerClient,
-                times(1)
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void missingCategoryShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": 250.00,
+                  "description": "Lunch",
+                  "expenseDate": "2026-09-21"
+                }
+                """
         );
+
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
+        );
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void nullCategoryShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": 250.00,
+                  "category": null,
+                  "description": "Lunch",
+                  "expenseDate": "2026-09-21"
+                }
+                """
+        );
+
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
+        );
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void numericCategoryShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": 250.00,
+                  "category": 123,
+                  "description": "Lunch",
+                  "expenseDate": "2026-09-21"
+                }
+                """
+        );
+
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
+        );
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void blankCategoryShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": 250.00,
+                  "category": "   ",
+                  "description": "Lunch",
+                  "expenseDate": "2026-09-21"
+                }
+                """
+        );
+
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
+        );
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void lowercaseAndSpacePaddedCategoryShouldBeNormalized() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": 250.00,
+                  "category": "  food  ",
+                  "description": "  Lunch  ",
+                  "expenseDate": "2026-09-21"
+                }
+                """
+        );
+
+        ExpenseCategorizationResult result =
+                categorize();
+
+        assertNotNull(result);
+
+        assertEquals(
+                ExpenseCategory.FOOD,
+                result.category()
+        );
+
+        assertEquals(
+                0,
+                new BigDecimal("250.00")
+                        .compareTo(result.amount())
+        );
+
+        assertEquals(
+                "Lunch",
+                result.description()
+        );
+
+        assertEquals(
+                REFERENCE_DATE,
+                result.expenseDate()
+        );
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void invalidAmountShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": "not-a-number",
+                  "category": "FOOD",
+                  "description": "Lunch",
+                  "expenseDate": "2026-09-21"
+                }
+                """
+        );
+
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
+        );
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void invalidExpenseDateShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                """
+                {
+                  "amount": 250.00,
+                  "category": "FOOD",
+                  "description": "Lunch",
+                  "expenseDate": "21-09-2026"
+                }
+                """
+        );
+
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
+        );
+
+        verifySingleProviderInvocation();
     }
 
     @Test
     void emptyProviderResponseShouldFailWithoutRetry() {
 
-        when(
-                providerClient.generate(
-                        anyString(),
-                        anyString(),
-                        any(),
-                        anyInt()
-                )
-        ).thenReturn("   ");
-
-        assertThrows(
-                AiServiceException.class,
-                () -> categorizer.categorize(
-                        "Lunch 250",
-                        LocalDate.of(2026, 9, 21)
-                )
+        stubProviderResponse(
+                "   "
         );
 
-        verify(
-                providerClient,
-                times(1)
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
+        AiServiceException exception =
+                assertCategorizationFails();
+
+        assertEquals(
+                "AI categorization is temporarily unavailable",
+                exception.getMessage()
         );
+
+        verifySingleProviderInvocation();
     }
 
     @Test
@@ -249,8 +420,10 @@ class GeminiExpenseCategorizerTest {
         ExpenseCategorizationResult result =
                 categorizer.categorize(
                         "Bus 100",
-                        LocalDate.of(2026, 9, 21)
+                        REFERENCE_DATE
                 );
+
+        assertNotNull(result);
 
         assertEquals(
                 ExpenseCategory.TRAVEL,
@@ -292,28 +465,14 @@ class GeminiExpenseCategorizerTest {
         );
 
         AiServiceException exception =
-                assertThrows(
-                        AiServiceException.class,
-                        () -> categorizer.categorize(
-                                "Lunch 250",
-                                LocalDate.of(2026, 9, 21)
-                        )
-                );
+                assertCategorizationFails();
 
         assertEquals(
                 "AI categorization is temporarily unavailable",
                 exception.getMessage()
         );
 
-        verify(
-                providerClient,
-                times(1)
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
-        );
+        verifySingleProviderInvocation();
     }
 
     @Test
@@ -338,7 +497,7 @@ class GeminiExpenseCategorizerTest {
                         AiServiceException.class,
                         () -> missingKeyCategorizer.categorize(
                                 "Lunch 250",
-                                LocalDate.of(2026, 9, 21)
+                                REFERENCE_DATE
                         )
                 );
 
@@ -372,7 +531,7 @@ class GeminiExpenseCategorizerTest {
                         AiServiceException.class,
                         () -> missingModelCategorizer.categorize(
                                 "Lunch 250",
-                                LocalDate.of(2026, 9, 21)
+                                REFERENCE_DATE
                         )
                 );
 
@@ -382,5 +541,48 @@ class GeminiExpenseCategorizerTest {
         );
 
         verifyNoInteractions(providerClient);
+    }
+
+    private ExpenseCategorizationResult categorize() {
+
+        return categorizer.categorize(
+                "Lunch 250",
+                REFERENCE_DATE
+        );
+    }
+
+    private AiServiceException assertCategorizationFails() {
+
+        return assertThrows(
+                AiServiceException.class,
+                this::categorize
+        );
+    }
+
+    private void stubProviderResponse(
+            String response
+    ) {
+
+        when(
+                providerClient.generate(
+                        anyString(),
+                        anyString(),
+                        any(),
+                        anyInt()
+                )
+        ).thenReturn(response);
+    }
+
+    private void verifySingleProviderInvocation() {
+
+        verify(
+                providerClient,
+                times(1)
+        ).generate(
+                anyString(),
+                anyString(),
+                any(),
+                anyInt()
+        );
     }
 }

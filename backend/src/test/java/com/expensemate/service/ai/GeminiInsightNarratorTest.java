@@ -30,7 +30,6 @@ import static org.mockito.Mockito.when;
 class GeminiInsightNarratorTest {
 
     private GeminiProviderClient providerClient;
-
     private GeminiInsightNarrator narrator;
 
     @BeforeEach
@@ -39,12 +38,6 @@ class GeminiInsightNarratorTest {
         providerClient =
                 mock(GeminiProviderClient.class);
 
-        /*
-         * Keep retry delays tiny in unit tests.
-         *
-         * Resilience4j exponential backoff requires the initial
-         * interval to be at least 1 millisecond.
-         */
         GeminiResilienceExecutor resilienceExecutor =
                 new GeminiResilienceExecutor(
                         3,
@@ -65,40 +58,53 @@ class GeminiInsightNarratorTest {
     @Test
     void validProviderResponseShouldReturnTrimmedNarration() {
 
-        when(
-                providerClient.generate(
-                        anyString(),
-                        anyString(),
-                        any(),
-                        anyInt()
-                )
-        ).thenReturn(
+        stubProviderResponse(
                 "  Food was your largest spending category this month.  "
         );
 
         String result =
-                narrator.narrate(
-                        createMonthlyInsightData()
-                );
+                narrate();
 
         assertEquals(
                 "Food was your largest spending category this month.",
                 result
         );
 
-        verify(
-                providerClient,
-                times(1)
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
-        );
+        verifySingleProviderInvocation();
     }
 
     @Test
     void blankProviderResponseShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                "   "
+        );
+
+        AiServiceException exception =
+                assertNarrationFails();
+
+        assertTemporaryUnavailable(exception);
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void emptyProviderResponseShouldFailWithoutRetry() {
+
+        stubProviderResponse(
+                ""
+        );
+
+        AiServiceException exception =
+                assertNarrationFails();
+
+        assertTemporaryUnavailable(exception);
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void nullProviderResponseShouldFailWithoutRetry() {
 
         when(
                 providerClient.generate(
@@ -108,36 +114,39 @@ class GeminiInsightNarratorTest {
                         anyInt()
                 )
         ).thenReturn(
-                "   "
+                (String) null
         );
 
         AiServiceException exception =
-                assertThrows(
-                        AiServiceException.class,
-                        () ->
-                                narrator.narrate(
-                                        createMonthlyInsightData()
-                                )
-                );
+                assertNarrationFails();
 
-        assertEquals(
-                "AI monthly insight is temporarily unavailable",
-                exception.getMessage()
+        assertTemporaryUnavailable(exception);
+
+        verifySingleProviderInvocation();
+    }
+
+    @Test
+    void providerRuntimeFailureShouldFailWithoutRetry() {
+
+        when(
+                providerClient.generate(
+                        anyString(),
+                        anyString(),
+                        any(),
+                        anyInt()
+                )
+        ).thenThrow(
+                new IllegalStateException(
+                        "unexpected provider response"
+                )
         );
 
-        /*
-         * Blank narration is malformed/invalid AI output.
-         * Retrying the same provider response is not useful.
-         */
-        verify(
-                providerClient,
-                times(1)
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
-        );
+        AiServiceException exception =
+                assertNarrationFails();
+
+        assertTemporaryUnavailable(exception);
+
+        verifySingleProviderInvocation();
     }
 
     @Test
@@ -166,18 +175,45 @@ class GeminiInsightNarratorTest {
                 );
 
         String result =
-                narrator.narrate(
-                        createMonthlyInsightData()
-                );
+                narrate();
 
         assertEquals(
                 "Spending increased this month.",
                 result
         );
 
-        /*
-         * Initial request + two bounded retries.
-         */
+        verify(
+                providerClient,
+                times(3)
+        ).generate(
+                anyString(),
+                anyString(),
+                any(),
+                anyInt()
+        );
+    }
+
+    @Test
+    void transientProviderFailureShouldStopAfterMaximumAttempts() {
+
+        when(
+                providerClient.generate(
+                        anyString(),
+                        anyString(),
+                        any(),
+                        anyInt()
+                )
+        ).thenThrow(
+                new GeminiProviderUnavailableException(
+                        "provider remains unavailable"
+                )
+        );
+
+        AiServiceException exception =
+                assertNarrationFails();
+
+        assertTemporaryUnavailable(exception);
+
         verify(
                 providerClient,
                 times(3)
@@ -207,34 +243,17 @@ class GeminiInsightNarratorTest {
         );
 
         AiServiceException exception =
-                assertThrows(
-                        AiServiceException.class,
-                        () ->
-                                narrator.narrate(
-                                        createMonthlyInsightData()
-                                )
-                );
+                assertNarrationFails();
 
-        assertEquals(
-                "AI monthly insight is temporarily unavailable",
-                exception.getMessage()
-        );
+        assertTemporaryUnavailable(exception);
 
         /*
-         * M22 policy:
+         * Established M22 policy:
          *
-         * timeout -> NO retry
-         * timeout -> YES circuit-breaker failure
+         * timeout -> no retry
+         * timeout -> circuit-breaker failure
          */
-        verify(
-                providerClient,
-                times(1)
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
-        );
+        verifySingleProviderInvocation();
     }
 
     @Test
@@ -256,26 +275,14 @@ class GeminiInsightNarratorTest {
         AiServiceException exception =
                 assertThrows(
                         AiServiceException.class,
-                        () ->
-                                unconfiguredNarrator.narrate(
-                                        createMonthlyInsightData()
-                                )
+                        () -> unconfiguredNarrator.narrate(
+                                createMonthlyInsightData()
+                        )
                 );
 
-        assertEquals(
-                "AI monthly insight is temporarily unavailable",
-                exception.getMessage()
-        );
+        assertTemporaryUnavailable(exception);
 
-        verify(
-                providerClient,
-                never()
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
-        );
+        verifyProviderWasNeverCalled();
     }
 
     @Test
@@ -297,26 +304,14 @@ class GeminiInsightNarratorTest {
         AiServiceException exception =
                 assertThrows(
                         AiServiceException.class,
-                        () ->
-                                unconfiguredNarrator.narrate(
-                                        createMonthlyInsightData()
-                                )
+                        () -> unconfiguredNarrator.narrate(
+                                createMonthlyInsightData()
+                        )
                 );
 
-        assertEquals(
-                "AI monthly insight is temporarily unavailable",
-                exception.getMessage()
-        );
+        assertTemporaryUnavailable(exception);
 
-        verify(
-                providerClient,
-                never()
-        ).generate(
-                anyString(),
-                anyString(),
-                any(),
-                anyInt()
-        );
+        verifyProviderWasNeverCalled();
     }
 
     @Test
@@ -325,14 +320,70 @@ class GeminiInsightNarratorTest {
         AiServiceException exception =
                 assertThrows(
                         AiServiceException.class,
-                        () ->
-                                narrator.narrate(null)
+                        () -> narrator.narrate(null)
                 );
 
         assertEquals(
                 "Monthly insight data is unavailable",
                 exception.getMessage()
         );
+
+        verifyProviderWasNeverCalled();
+    }
+
+    private String narrate() {
+
+        return narrator.narrate(
+                createMonthlyInsightData()
+        );
+    }
+
+    private AiServiceException assertNarrationFails() {
+
+        return assertThrows(
+                AiServiceException.class,
+                this::narrate
+        );
+    }
+
+    private void assertTemporaryUnavailable(
+            AiServiceException exception
+    ) {
+
+        assertEquals(
+                "AI monthly insight is temporarily unavailable",
+                exception.getMessage()
+        );
+    }
+
+    private void stubProviderResponse(
+            String response
+    ) {
+
+        when(
+                providerClient.generate(
+                        anyString(),
+                        anyString(),
+                        any(),
+                        anyInt()
+                )
+        ).thenReturn(response);
+    }
+
+    private void verifySingleProviderInvocation() {
+
+        verify(
+                providerClient,
+                times(1)
+        ).generate(
+                anyString(),
+                anyString(),
+                any(),
+                anyInt()
+        );
+    }
+
+    private void verifyProviderWasNeverCalled() {
 
         verify(
                 providerClient,
