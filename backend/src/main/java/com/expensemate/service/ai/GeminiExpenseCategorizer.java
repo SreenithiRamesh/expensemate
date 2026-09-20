@@ -3,10 +3,14 @@ package com.expensemate.service.ai;
 import com.expensemate.dto.ai.ExpenseCategorizationResult;
 import com.expensemate.entity.ExpenseCategory;
 import com.expensemate.exception.AiServiceException;
-import com.google.genai.Client;
+import com.expensemate.service.ai.provider.GeminiProviderClient;
+import com.expensemate.service.ai.resilience.GeminiNonRetryableException;
+import com.expensemate.service.ai.resilience.GeminiProviderUnavailableException;
+import com.expensemate.service.ai.resilience.GeminiResilienceExecutor;
+import com.expensemate.service.ai.resilience.GeminiTimeoutException;
+import com.google.genai.errors.ApiException;
+import com.google.genai.errors.GenAiIOException;
 import com.google.genai.types.GenerateContentConfig;
-import com.google.genai.types.GenerateContentResponse;
-import com.google.genai.types.HttpOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,30 +19,44 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
+import java.net.SocketTimeoutException;
 import java.time.LocalDate;
-import java.util.List;
-import java.util.Map;
 
 @Component
-public class GeminiExpenseCategorizer implements ExpenseCategorizer {
+public class GeminiExpenseCategorizer
+        implements ExpenseCategorizer {
 
     private static final Logger log =
-            LoggerFactory.getLogger(GeminiExpenseCategorizer.class);
+            LoggerFactory.getLogger(
+                    GeminiExpenseCategorizer.class
+            );
 
+    /*
+     * Categorization should remain responsive.
+     *
+     * M22 deliberately does NOT retry a full timeout, so this
+     * cannot become 15 seconds multiplied by the retry count.
+     */
     private static final int GEMINI_TIMEOUT_MS = 15_000;
 
     private final String apiKey;
     private final String model;
     private final JsonMapper jsonMapper;
+    private final GeminiResilienceExecutor resilienceExecutor;
+    private final GeminiProviderClient providerClient;
 
     public GeminiExpenseCategorizer(
             @Value("${gemini.api-key:}") String apiKey,
             @Value("${gemini.model:gemini-3.8-flash}") String model,
-            JsonMapper jsonMapper
+            JsonMapper jsonMapper,
+            GeminiResilienceExecutor resilienceExecutor,
+            GeminiProviderClient providerClient
     ) {
         this.apiKey = apiKey;
         this.model = model;
         this.jsonMapper = jsonMapper;
+        this.resilienceExecutor = resilienceExecutor;
+        this.providerClient = providerClient;
     }
 
     @Override
@@ -48,11 +66,11 @@ public class GeminiExpenseCategorizer implements ExpenseCategorizer {
     ) {
 
         /*
-         * Gemini is optional infrastructure.
-         * A missing API key must not prevent ExpenseMate
-         * from starting or affect non-AI features.
+         * Missing local configuration is not a Gemini provider
+         * outage and must not consume retry/circuit capacity.
          */
         if (apiKey == null || apiKey.isBlank()) {
+
             log.warn(
                     "Gemini expense categorization is unavailable because the API key is not configured"
             );
@@ -63,6 +81,7 @@ public class GeminiExpenseCategorizer implements ExpenseCategorizer {
         }
 
         if (model == null || model.isBlank()) {
+
             log.warn(
                     "Gemini expense categorization is unavailable because the model is not configured"
             );
@@ -75,62 +94,27 @@ public class GeminiExpenseCategorizer implements ExpenseCategorizer {
         try {
 
             /*
-             * Apply a client-level timeout so a slow or unavailable
-             * Gemini service cannot keep the ExpenseMate request
-             * waiting indefinitely.
-             */
-            HttpOptions httpOptions =
-                    HttpOptions.builder()
-                            .timeout(GEMINI_TIMEOUT_MS)
-                            .build();
-
-            Client client =
-                    Client.builder()
-                            .apiKey(apiKey)
-                            .httpOptions(httpOptions)
-                            .build();
-
-            GenerateContentConfig config =
-                    GenerateContentConfig.builder()
-                            .responseMimeType("application/json")
-                            .responseJsonSchema(buildSchema())
-                            .temperature(0.1F)
-                            .build();
-
-            GenerateContentResponse response =
-                    client.models.generateContent(
-                            model,
-                            buildPrompt(text, currentDate),
-                            config
-                    );
-
-            String responseText = response.text();
-
-            if (responseText == null || responseText.isBlank()) {
-                throw new AiServiceException(
-                        "AI categorization returned an empty response"
-                );
-            }
-
-            return parseResponse(responseText);
-
-        } catch (AiServiceException exception) {
-            throw exception;
-
-        } catch (Exception exception) {
-
-            /*
-             * Provider-specific errors, network failures,
-             * timeouts and quota errors stay inside the server.
+             * Provider invocation, parsing and AI-output validation
+             * are protected by the shared Gemini resilience layer.
              *
-             * The API client receives a stable application-level
-             * error instead of Gemini implementation details.
+             * This allows malformed AI output to be classified as
+             * non-retryable before it reaches the retry policy.
              */
-            log.warn(
-                    "Gemini expense categorization failed. Cause: {}",
-                    exception.getClass().getSimpleName()
+            return resilienceExecutor.execute(
+                    "expense-categorization",
+                    () -> callGemini(
+                            text,
+                            currentDate
+                    )
             );
 
+        } catch (GeminiProviderUnavailableException
+                 | GeminiNonRetryableException exception) {
+
+            /*
+             * Keep provider and resilience implementation details
+             * inside the backend.
+             */
             throw new AiServiceException(
                     "AI categorization is temporarily unavailable",
                     exception
@@ -138,46 +122,218 @@ public class GeminiExpenseCategorizer implements ExpenseCategorizer {
         }
     }
 
-    private Map<String, Object> buildSchema() {
+    private ExpenseCategorizationResult callGemini(
+            String text,
+            LocalDate currentDate
+    ) {
 
-        return Map.of(
-                "type", "object",
-                "properties", Map.of(
-                        "amount", Map.of(
-                                "type", "number",
-                                "minimum", 0.01
-                        ),
-                        "category", Map.of(
-                                "type", "string",
-                                "enum", List.of(
-                                        "FOOD",
-                                        "TRAVEL",
-                                        "SHOPPING",
-                                        "BILLS",
-                                        "ENTERTAINMENT",
-                                        "HEALTH",
-                                        "EDUCATION",
-                                        "RENT",
-                                        "SUBSCRIPTION",
-                                        "OTHER"
-                                )
-                        ),
-                        "description", Map.of(
-                                "type", "string"
-                        ),
-                        "expenseDate", Map.of(
-                                "type", "string",
-                                "format", "date"
-                        )
-                ),
-                "required", List.of(
-                        "amount",
-                        "category",
-                        "description",
-                        "expenseDate"
-                ),
-                "additionalProperties", false
+        try {
+
+            GenerateContentConfig config =
+                    GenerateContentConfig.builder()
+                            .temperature(0.1F)
+                            .build();
+
+            String responseText =
+                    providerClient.generate(
+                            model,
+                            buildPrompt(
+                                    text,
+                                    currentDate
+                            ),
+                            config,
+                            GEMINI_TIMEOUT_MS
+                    );
+
+            /*
+             * Empty output is invalid AI output.
+             *
+             * It should not be retried and should not make the
+             * provider circuit appear unhealthy.
+             */
+            if (responseText == null
+                    || responseText.isBlank()) {
+
+                throw new GeminiNonRetryableException(
+                        "Gemini returned an empty categorization response"
+                );
+            }
+
+            return parseResponse(
+                    responseText
+            );
+
+            /*
+             * IMPORTANT:
+             *
+             * These exceptions may already have been classified by
+             * GeminiProviderClient or by validation logic below.
+             *
+             * Preserve their classification instead of allowing the
+             * generic RuntimeException handler to convert them.
+             */
+
+        } catch (GeminiNonRetryableException exception) {
+
+            throw exception;
+
+        } catch (GeminiTimeoutException exception) {
+
+            throw exception;
+
+        } catch (GeminiProviderUnavailableException exception) {
+
+            throw exception;
+
+        } catch (ApiException exception) {
+
+            /*
+             * Temporary compatibility path while Google SDK
+             * exception classification is still also supported at
+             * the feature boundary.
+             */
+            throw classifyApiException(
+                    exception
+            );
+
+        } catch (GenAiIOException exception) {
+
+            if (isTimeout(exception)) {
+
+                log.warn(
+                        "Gemini expense categorization request timed out"
+                );
+
+                throw new GeminiTimeoutException(
+                        "Gemini request timed out",
+                        exception
+                );
+            }
+
+            /*
+             * Non-timeout provider I/O failures may be temporary
+             * and are therefore eligible for bounded retry.
+             */
+            log.warn(
+                    "Gemini expense categorization encountered a provider I/O failure"
+            );
+
+            throw new GeminiProviderUnavailableException(
+                    "Gemini provider is temporarily unavailable",
+                    exception
+            );
+
+        } catch (RuntimeException exception) {
+
+            if (isTimeout(exception)) {
+
+                log.warn(
+                        "Gemini expense categorization request timed out"
+                );
+
+                throw new GeminiTimeoutException(
+                        "Gemini request timed out",
+                        exception
+                );
+            }
+
+            /*
+             * Unknown local runtime failures should not cause
+             * repeated calls to Gemini.
+             */
+            log.warn(
+                    "Gemini expense categorization failed locally. Cause={}",
+                    exception.getClass().getSimpleName()
+            );
+
+            throw new GeminiNonRetryableException(
+                    "Gemini categorization failed",
+                    exception
+            );
+        }
+    }
+
+    private RuntimeException classifyApiException(
+            ApiException exception
+    ) {
+
+        int statusCode =
+                exception.code();
+
+        /*
+         * Provider-side timeout:
+         *
+         * - NO retry
+         * - YES circuit-breaker failure
+         */
+        if (statusCode == 408) {
+
+            log.warn(
+                    "Gemini expense categorization timed out with provider status={}",
+                    statusCode
+            );
+
+            return new GeminiTimeoutException(
+                    "Gemini request timed out",
+                    exception
+            );
+        }
+
+        /*
+         * Rate limiting and server-side failures are normally
+         * transient provider conditions.
+         */
+        if (statusCode == 429
+                || statusCode >= 500) {
+
+            log.warn(
+                    "Gemini expense categorization encountered a transient provider failure. Status={}",
+                    statusCode
+            );
+
+            return new GeminiProviderUnavailableException(
+                    "Gemini provider is temporarily unavailable",
+                    exception
+            );
+        }
+
+        /*
+         * Other provider responses, especially non-transient 4xx
+         * failures, must not trigger another Gemini request.
+         */
+        log.warn(
+                "Gemini expense categorization encountered a non-retryable provider response. Status={}",
+                statusCode
         );
+
+        return new GeminiNonRetryableException(
+                "Gemini request was rejected",
+                exception
+        );
+    }
+
+    private boolean isTimeout(
+            Throwable throwable
+    ) {
+
+        Throwable current =
+                throwable;
+
+        while (current != null) {
+
+            if (current instanceof SocketTimeoutException) {
+                return true;
+            }
+
+            if (current instanceof java.io.InterruptedIOException) {
+                return true;
+            }
+
+            current =
+                    current.getCause();
+        }
+
+        return false;
     }
 
     private String buildPrompt(
@@ -186,11 +342,14 @@ public class GeminiExpenseCategorizer implements ExpenseCategorizer {
     ) {
 
         return """
-                You are the expense categorization component of ExpenseMate.
+                You are the expense categorization assistant for ExpenseMate.
 
-                Convert the user's natural-language expense into structured data.
+                Convert the user's natural-language expense description into one JSON object.
 
                 Current date: %s
+
+                User input:
+                %s
 
                 Allowed categories:
                 FOOD
@@ -205,18 +364,28 @@ public class GeminiExpenseCategorizer implements ExpenseCategorizer {
                 OTHER
 
                 Rules:
-                - Extract only information supported by the user's text.
-                - amount must be a positive monetary number.
-                - Choose exactly one allowed category.
-                - Keep description short and useful.
-                - Resolve words such as "today" using the current date.
-                - If no date is mentioned, use the current date.
-                - Do not perform database operations.
-                - Return only data matching the requested JSON schema.
+                - Return JSON only.
+                - Do not use markdown.
+                - Do not add explanations.
+                - amount must be a positive decimal number.
+                - category must be exactly one of the allowed categories.
+                - description must be short and useful.
+                - expenseDate must use YYYY-MM-DD.
+                - If the user does not specify a date, use the current date.
+                - Do not invent an amount.
+                - Do not invent financial information.
 
-                User expense:
-                %s
-                """.formatted(currentDate, text);
+                Required JSON structure:
+                {
+                  "amount": 0.00,
+                  "category": "FOOD",
+                  "description": "Short description",
+                  "expenseDate": "YYYY-MM-DD"
+                }
+                """.formatted(
+                currentDate,
+                text
+        );
     }
 
     private ExpenseCategorizationResult parseResponse(
@@ -224,78 +393,226 @@ public class GeminiExpenseCategorizer implements ExpenseCategorizer {
     ) {
 
         try {
-            JsonNode json = jsonMapper.readTree(responseText);
 
-            /*
-             * Even though Gemini is asked to follow a JSON schema,
-             * Java still validates all required fields before
-             * accepting the AI-generated result.
-             */
-            if (json == null
-                    || json.get("amount") == null
-                    || json.get("category") == null
-                    || json.get("description") == null
-                    || json.get("expenseDate") == null) {
+            String cleanedResponse =
+                    cleanJsonResponse(
+                            responseText
+                    );
 
-                throw new AiServiceException(
-                        "AI returned an invalid categorization response"
+            JsonNode root =
+                    jsonMapper.readTree(
+                            cleanedResponse
+                    );
+
+            if (root == null
+                    || !root.isObject()) {
+
+                throw new GeminiNonRetryableException(
+                        "Gemini categorization response must be a JSON object"
+                );
+            }
+
+            JsonNode amountNode =
+                    root.get("amount");
+
+            JsonNode categoryNode =
+                    root.get("category");
+
+            JsonNode descriptionNode =
+                    root.get("description");
+
+            JsonNode expenseDateNode =
+                    root.get("expenseDate");
+
+            if (amountNode == null
+                    || categoryNode == null
+                    || descriptionNode == null
+                    || expenseDateNode == null) {
+
+                throw new GeminiNonRetryableException(
+                        "Gemini categorization response is missing required fields"
                 );
             }
 
             BigDecimal amount =
-                    json.get("amount").decimalValue();
+                    parseAmount(
+                            amountNode
+                    );
 
             ExpenseCategory category =
-                    ExpenseCategory.valueOf(
-                            json.get("category").asText()
+                    parseCategory(
+                            categoryNode
                     );
 
             String description =
-                    json.get("description")
-                            .asText()
-                            .trim();
-
-            LocalDate expenseDate =
-                    LocalDate.parse(
-                            json.get("expenseDate").asText()
+                    parseDescription(
+                            descriptionNode
                     );
 
-            if (amount.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new AiServiceException(
-                        "AI returned an invalid expense amount"
-                );
-            }
-
-            /*
-             * ExpenseMate stores monetary values with at most
-             * two decimal places. Do not silently round an
-             * unexpected AI-generated amount.
-             */
-            if (amount.scale() > 2) {
-                throw new AiServiceException(
-                        "AI returned an invalid expense amount"
-                );
-            }
-
-            if (description.isBlank()) {
-                throw new AiServiceException(
-                        "AI returned an invalid expense description"
-                );
-            }
+            LocalDate expenseDate =
+                    parseExpenseDate(
+                            expenseDateNode
+                    );
 
             return new ExpenseCategorizationResult(
-                    amount.setScale(2),
+                    amount,
                     category,
                     description,
                     expenseDate
             );
 
-        } catch (AiServiceException exception) {
+        } catch (GeminiNonRetryableException exception) {
+
             throw exception;
 
-        } catch (Exception exception) {
-            throw new AiServiceException(
-                    "AI returned an invalid categorization response",
+        } catch (RuntimeException exception) {
+
+            throw new GeminiNonRetryableException(
+                    "Gemini returned an invalid categorization response",
+                    exception
+            );
+        }
+    }
+
+    private String cleanJsonResponse(
+            String responseText
+    ) {
+
+        String cleaned =
+                responseText.trim();
+
+        /*
+         * Defensive cleanup in case the model wraps otherwise valid
+         * JSON in a markdown code fence.
+         */
+        if (cleaned.startsWith("```")) {
+
+            cleaned =
+                    cleaned.replaceFirst(
+                            "^```(?:json)?\\s*",
+                            ""
+                    );
+
+            cleaned =
+                    cleaned.replaceFirst(
+                            "\\s*```$",
+                            ""
+                    );
+        }
+
+        return cleaned.trim();
+    }
+
+    private BigDecimal parseAmount(
+            JsonNode amountNode
+    ) {
+
+        try {
+
+            BigDecimal amount =
+                    new BigDecimal(
+                            amountNode.asText()
+                    );
+
+            if (amount.compareTo(
+                    BigDecimal.ZERO
+            ) <= 0) {
+
+                throw new GeminiNonRetryableException(
+                        "Gemini returned a non-positive expense amount"
+                );
+            }
+
+            return amount;
+
+        } catch (GeminiNonRetryableException exception) {
+
+            throw exception;
+
+        } catch (RuntimeException exception) {
+
+            throw new GeminiNonRetryableException(
+                    "Gemini returned an invalid expense amount",
+                    exception
+            );
+        }
+    }
+
+    private ExpenseCategory parseCategory(
+            JsonNode categoryNode
+    ) {
+
+        String categoryValue =
+                categoryNode.asText();
+
+        if (categoryValue == null
+                || categoryValue.isBlank()) {
+
+            throw new GeminiNonRetryableException(
+                    "Gemini returned an empty expense category"
+            );
+        }
+
+        try {
+
+            return ExpenseCategory.valueOf(
+                    categoryValue
+                            .trim()
+                            .toUpperCase()
+            );
+
+        } catch (IllegalArgumentException exception) {
+
+            throw new GeminiNonRetryableException(
+                    "Gemini returned an unsupported expense category",
+                    exception
+            );
+        }
+    }
+
+    private String parseDescription(
+            JsonNode descriptionNode
+    ) {
+
+        String description =
+                descriptionNode.asText();
+
+        if (description == null
+                || description.isBlank()) {
+
+            throw new GeminiNonRetryableException(
+                    "Gemini returned an empty expense description"
+            );
+        }
+
+        return description.trim();
+    }
+
+    private LocalDate parseExpenseDate(
+            JsonNode expenseDateNode
+    ) {
+
+        String expenseDateValue =
+                expenseDateNode.asText();
+
+        if (expenseDateValue == null
+                || expenseDateValue.isBlank()) {
+
+            throw new GeminiNonRetryableException(
+                    "Gemini returned an empty expense date"
+            );
+        }
+
+        try {
+
+            return LocalDate.parse(
+                    expenseDateValue.trim()
+            );
+
+        } catch (RuntimeException exception) {
+
+            throw new GeminiNonRetryableException(
+                    "Gemini returned an invalid expense date",
                     exception
             );
         }
