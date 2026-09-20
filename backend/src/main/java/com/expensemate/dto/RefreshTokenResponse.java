@@ -1,34 +1,25 @@
 package com.expensemate.dto;
 
-public class LoginResponse {
+public class RefreshTokenResponse {
 
     private String accessToken;
     private String refreshToken;
     private String tokenType;
     private long expiresIn;
-    private Long userId;
-    private String name;
-    private String email;
 
-    public LoginResponse() {
+    public RefreshTokenResponse() {
     }
 
-    public LoginResponse(
+    public RefreshTokenResponse(
             String accessToken,
             String refreshToken,
             String tokenType,
-            long expiresIn,
-            Long userId,
-            String name,
-            String email
+            long expiresIn
     ) {
         this.accessToken = accessToken;
         this.refreshToken = refreshToken;
         this.tokenType = tokenType;
         this.expiresIn = expiresIn;
-        this.userId = userId;
-        this.name = name;
-        this.email = email;
     }
 
     public String getAccessToken() {
@@ -45,17 +36,5 @@ public class LoginResponse {
 
     public long getExpiresIn() {
         return expiresIn;
-    }
-
-    public Long getUserId() {
-        return userId;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public String getEmail() {
-        return email;
     }
 }
