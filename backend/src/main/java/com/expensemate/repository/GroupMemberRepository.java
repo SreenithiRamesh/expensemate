@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,6 +28,18 @@ public interface GroupMemberRepository
 
     long countByGroupId(
             Long groupId
+    );
+
+    @Query("""
+            SELECT gm
+            FROM GroupMember gm
+            JOIN FETCH gm.user
+            WHERE gm.group.id = :groupId
+              AND gm.user.id IN :userIds
+            """)
+    List<GroupMember> findMembersWithUsers(
+            @Param("groupId") Long groupId,
+            @Param("userIds") Collection<Long> userIds
     );
 
     @Query("""
