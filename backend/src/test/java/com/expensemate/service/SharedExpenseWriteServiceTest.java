@@ -29,6 +29,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -105,12 +106,6 @@ class SharedExpenseWriteServiceTest {
         ExpenseGroup group =
                 group(GROUP_ID);
 
-        GroupMember creatorMembership =
-                membership(creator);
-
-        GroupMember secondMembership =
-                membership(secondUser);
-
         List<SplitInputRequest> splits =
                 List.of(
                         splitRequest(1L),
@@ -131,38 +126,13 @@ class SharedExpenseWriteServiceTest {
                 group
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                1L
-                        )
-        ).thenReturn(
-                Optional.of(creatorMembership)
+        mockBulkMembers(
+                membership(creator),
+                membership(secondUser)
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                2L
-                        )
-        ).thenReturn(
-                Optional.of(secondMembership)
-        );
-
-        when(
-                splitStrategyResolver.resolve(
-                        SplitType.EQUAL
-                )
-        ).thenReturn(splitStrategy);
-
-        when(
-                splitStrategy.calculate(
-                        eq(new BigDecimal("100.00")),
-                        eq(splits)
-                )
-        ).thenReturn(
+        mockSuccessfulSplitCalculation(
+                splits,
                 List.of(
                         new SplitResult(
                                 1L,
@@ -187,18 +157,6 @@ class SharedExpenseWriteServiceTest {
         );
 
         when(
-                userRepository.findById(1L)
-        ).thenReturn(
-                Optional.of(creator)
-        );
-
-        when(
-                userRepository.findById(2L)
-        ).thenReturn(
-                Optional.of(secondUser)
-        );
-
-        when(
                 expenseSplitRepository.saveAll(
                         anyList()
                 )
@@ -217,32 +175,14 @@ class SharedExpenseWriteServiceTest {
                 );
 
         assertNotNull(result);
-
-        assertEquals(
-                "Dinner",
-                result.getTitle()
-        );
-
-        assertMoney(
-                "100.00",
-                result.getAmount()
-        );
-
-        assertSame(
-                creator,
-                result.getCreatedBy()
-        );
-
-        assertSame(
-                creator,
-                result.getPaidBy()
-        );
-
+        assertEquals("Dinner", result.getTitle());
+        assertMoney("100.00", result.getAmount());
+        assertSame(creator, result.getCreatedBy());
+        assertSame(creator, result.getPaidBy());
         assertEquals(
                 IDEMPOTENCY_KEY,
                 result.getIdempotencyKey()
         );
-
         assertEquals(
                 FINGERPRINT,
                 result.getRequestFingerprint()
@@ -292,18 +232,45 @@ class SharedExpenseWriteServiceTest {
                 savedSplits.size()
         );
 
-        assertMoney(
-                "50.00",
-                savedSplits
-                        .get(0)
-                        .getShareAmount()
+        assertSame(
+                creator,
+                savedSplits.get(0).getUser()
+        );
+
+        assertSame(
+                secondUser,
+                savedSplits.get(1).getUser()
         );
 
         assertMoney(
                 "50.00",
-                savedSplits
-                        .get(1)
-                        .getShareAmount()
+                savedSplits.get(0).getShareAmount()
+        );
+
+        assertMoney(
+                "50.00",
+                savedSplits.get(1).getShareAmount()
+        );
+
+        verifyBulkMemberLookupContains(
+                1L,
+                2L
+        );
+
+        /*
+         * M27 regression guard:
+         *
+         * Only the authenticated creator should be loaded
+         * independently. Split participants must be reused
+         * from the bulk membership query.
+         */
+        verify(
+                userRepository,
+                times(1)
+        ).findById(CURRENT_USER_ID);
+
+        verifyNoMoreInteractions(
+                userRepository
         );
 
         verify(
@@ -337,12 +304,6 @@ class SharedExpenseWriteServiceTest {
         ExpenseGroup group =
                 group(GROUP_ID);
 
-        GroupMember creatorMembership =
-                membership(creator);
-
-        GroupMember payerMembership =
-                membership(payer);
-
         List<SplitInputRequest> splits =
                 List.of(
                         splitRequest(1L),
@@ -363,38 +324,13 @@ class SharedExpenseWriteServiceTest {
                 group
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                2L
-                        )
-        ).thenReturn(
-                Optional.of(payerMembership)
+        mockBulkMembers(
+                membership(creator),
+                membership(payer)
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                1L
-                        )
-        ).thenReturn(
-                Optional.of(creatorMembership)
-        );
-
-        when(
-                splitStrategyResolver.resolve(
-                        SplitType.EQUAL
-                )
-        ).thenReturn(splitStrategy);
-
-        when(
-                splitStrategy.calculate(
-                        eq(new BigDecimal("100.00")),
-                        eq(splits)
-                )
-        ).thenReturn(
+        mockSuccessfulSplitCalculation(
+                splits,
                 List.of(
                         new SplitResult(
                                 1L,
@@ -418,18 +354,6 @@ class SharedExpenseWriteServiceTest {
                         invocation.getArgument(0)
         );
 
-        when(
-                userRepository.findById(1L)
-        ).thenReturn(
-                Optional.of(creator)
-        );
-
-        when(
-                userRepository.findById(2L)
-        ).thenReturn(
-                Optional.of(payer)
-        );
-
         SharedExpense result =
                 writeService.create(
                         GROUP_ID,
@@ -440,15 +364,21 @@ class SharedExpenseWriteServiceTest {
                 );
 
         assertNotNull(result);
+        assertSame(creator, result.getCreatedBy());
+        assertSame(payer, result.getPaidBy());
 
-        assertSame(
-                creator,
-                result.getCreatedBy()
+        verifyBulkMemberLookupContains(
+                1L,
+                2L
         );
 
-        assertSame(
-                payer,
-                result.getPaidBy()
+        verify(
+                userRepository,
+                times(1)
+        ).findById(CURRENT_USER_ID);
+
+        verifyNoMoreInteractions(
+                userRepository
         );
 
         verify(
@@ -563,6 +493,14 @@ class SharedExpenseWriteServiceTest {
         );
 
         verify(
+                groupMemberRepository,
+                never()
+        ).findMembersWithUsers(
+                anyLong(),
+                anyCollection()
+        );
+
+        verify(
                 sharedExpenseRepository,
                 never()
         ).saveAndFlush(any());
@@ -573,7 +511,7 @@ class SharedExpenseWriteServiceTest {
     }
 
     @Test
-    void shouldRejectDuplicateSplitMembers() {
+    void shouldRejectDuplicateSplitMembersBeforeBulkLookup() {
 
         User creator =
                 user(
@@ -624,6 +562,14 @@ class SharedExpenseWriteServiceTest {
         );
 
         verify(
+                groupMemberRepository,
+                never()
+        ).findMembersWithUsers(
+                anyLong(),
+                anyCollection()
+        );
+
+        verify(
                 splitStrategyResolver,
                 never()
         ).resolve(any());
@@ -667,14 +613,12 @@ class SharedExpenseWriteServiceTest {
                 group
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                99L
-                        )
-        ).thenReturn(
-                Optional.empty()
+        /*
+         * The creator is a valid participant, but user 99
+         * is absent from the bulk membership result.
+         */
+        mockBulkMembers(
+                membership(creator)
         );
 
         InvalidRequestException exception =
@@ -694,6 +638,16 @@ class SharedExpenseWriteServiceTest {
                 "Payer must be a member of this group",
                 exception.getMessage()
         );
+
+        verifyBulkMemberLookupContains(
+                1L,
+                99L
+        );
+
+        verify(
+                splitStrategyResolver,
+                never()
+        ).resolve(any());
 
         verify(
                 sharedExpenseRepository,
@@ -725,12 +679,6 @@ class SharedExpenseWriteServiceTest {
         ExpenseGroup group =
                 group(GROUP_ID);
 
-        GroupMember payerMembership =
-                membership(payer);
-
-        GroupMember creatorMembership =
-                membership(creator);
-
         List<SplitInputRequest> splits =
                 List.of(
                         splitRequest(1L),
@@ -751,34 +699,12 @@ class SharedExpenseWriteServiceTest {
                 group
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                2L
-                        )
-        ).thenReturn(
-                Optional.of(payerMembership)
-        );
-
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                1L
-                        )
-        ).thenReturn(
-                Optional.of(creatorMembership)
-        );
-
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                99L
-                        )
-        ).thenReturn(
-                Optional.empty()
+        /*
+         * User 99 is deliberately absent.
+         */
+        mockBulkMembers(
+                membership(creator),
+                membership(payer)
         );
 
         InvalidRequestException exception =
@@ -797,6 +723,12 @@ class SharedExpenseWriteServiceTest {
         assertEquals(
                 "All split participants must be members of this group",
                 exception.getMessage()
+        );
+
+        verifyBulkMemberLookupContains(
+                1L,
+                2L,
+                99L
         );
 
         verify(
@@ -834,12 +766,6 @@ class SharedExpenseWriteServiceTest {
         ExpenseGroup group =
                 group(GROUP_ID);
 
-        GroupMember creatorMembership =
-                membership(creator);
-
-        GroupMember secondMembership =
-                membership(secondUser);
-
         List<SplitInputRequest> splits =
                 List.of(
                         splitRequest(1L),
@@ -860,24 +786,9 @@ class SharedExpenseWriteServiceTest {
                 group
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                1L
-                        )
-        ).thenReturn(
-                Optional.of(creatorMembership)
-        );
-
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                2L
-                        )
-        ).thenReturn(
-                Optional.of(secondMembership)
+        mockBulkMembers(
+                membership(creator),
+                membership(secondUser)
         );
 
         when(
@@ -952,9 +863,6 @@ class SharedExpenseWriteServiceTest {
         ExpenseGroup group =
                 group(GROUP_ID);
 
-        GroupMember creatorMembership =
-                membership(creator);
-
         List<SplitInputRequest> splits =
                 List.of(
                         splitRequest(1L)
@@ -974,28 +882,12 @@ class SharedExpenseWriteServiceTest {
                 group
         );
 
-        when(
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                GROUP_ID,
-                                1L
-                        )
-        ).thenReturn(
-                Optional.of(creatorMembership)
+        mockBulkMembers(
+                membership(creator)
         );
 
-        when(
-                splitStrategyResolver.resolve(
-                        SplitType.EQUAL
-                )
-        ).thenReturn(splitStrategy);
-
-        when(
-                splitStrategy.calculate(
-                        eq(new BigDecimal("100.00")),
-                        eq(splits)
-                )
-        ).thenReturn(
+        mockSuccessfulSplitCalculation(
+                splits,
                 List.of(
                         new SplitResult(
                                 1L,
@@ -1074,6 +966,79 @@ class SharedExpenseWriteServiceTest {
                                 CURRENT_USER_ID
                         )
         ).thenReturn(true);
+    }
+
+    private void mockBulkMembers(
+            GroupMember... memberships
+    ) {
+
+        when(
+                groupMemberRepository
+                        .findMembersWithUsers(
+                                eq(GROUP_ID),
+                                anyCollection()
+                        )
+        ).thenReturn(
+                List.of(memberships)
+        );
+    }
+
+    private void mockSuccessfulSplitCalculation(
+            List<SplitInputRequest> splits,
+            List<SplitResult> results
+    ) {
+
+        when(
+                splitStrategyResolver.resolve(
+                        SplitType.EQUAL
+                )
+        ).thenReturn(splitStrategy);
+
+        when(
+                splitStrategy.calculate(
+                        eq(new BigDecimal("100.00")),
+                        eq(splits)
+                )
+        ).thenReturn(results);
+    }
+
+    private void verifyBulkMemberLookupContains(
+            Long... expectedUserIds
+    ) {
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Collection<Long>> userIdsCaptor =
+                ArgumentCaptor.forClass(
+                        Collection.class
+                );
+
+        verify(
+                groupMemberRepository,
+                times(1)
+        ).findMembersWithUsers(
+                eq(GROUP_ID),
+                userIdsCaptor.capture()
+        );
+
+        Collection<Long> capturedUserIds =
+                userIdsCaptor.getValue();
+
+        assertEquals(
+                expectedUserIds.length,
+                capturedUserIds.size()
+        );
+
+        for (Long expectedUserId
+                : expectedUserIds) {
+
+            assertTrue(
+                    capturedUserIds.contains(
+                            expectedUserId
+                    ),
+                    "Bulk member lookup did not contain user "
+                            + expectedUserId
+            );
+        }
     }
 
     private SharedExpenseCreateRequest request(

@@ -595,16 +595,46 @@ class SettlementIdempotencyConcurrencyIntegrationTest {
         ) {
 
             /*
-             * Drop child tables before their parent tables.
+             * The test profile uses one shared in-memory H2
+             * database. Other integration tests may have created
+             * additional tables before this test starts.
+             *
+             * Drop every known child table before dropping its
+             * referenced parent table.
+             */
+
+            /*
+             * expense_splits references both shared_expenses
+             * and users.
+             */
+            statement.execute(
+                    "DROP TABLE IF EXISTS expense_splits"
+            );
+
+            /*
+             * shared_expenses references expense_groups and users.
+             */
+            statement.execute(
+                    "DROP TABLE IF EXISTS shared_expenses"
+            );
+
+            /*
+             * group_activity references expense_groups and users.
              */
             statement.execute(
                     "DROP TABLE IF EXISTS group_activity"
             );
 
+            /*
+             * settlements references expense_groups and users.
+             */
             statement.execute(
                     "DROP TABLE IF EXISTS settlements"
             );
 
+            /*
+             * group_members references expense_groups and users.
+             */
             statement.execute(
                     "DROP TABLE IF EXISTS group_members"
             );
@@ -614,7 +644,9 @@ class SettlementIdempotencyConcurrencyIntegrationTest {
             );
 
             /*
-             * V11 creates refresh_tokens with a foreign key to users.
+             * V11 creates refresh_tokens with a foreign key to
+             * users, including a self-referencing replacement
+             * token relationship.
              */
             statement.execute(
                     "DROP TABLE IF EXISTS refresh_tokens"

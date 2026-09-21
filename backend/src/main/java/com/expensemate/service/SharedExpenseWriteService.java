@@ -22,8 +22,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -82,21 +85,40 @@ public class SharedExpenseWriteService {
                 request.getSplits()
         );
 
-        User payer =
-                getGroupMemberUser(
+        /*
+         * Collect the payer and every split participant before
+         * querying the database.
+         *
+         * LinkedHashSet removes duplicates while preserving
+         * predictable insertion order.
+         */
+        Set<Long> requiredUserIds =
+                collectRequiredUserIds(request);
+
+        /*
+         * M27 performance optimization:
+         *
+         * Load all required memberships and their users using
+         * one JOIN FETCH query instead of querying separately
+         * for every participant.
+         */
+        Map<Long, User> memberUsersById =
+                loadMemberUsers(
                         groupId,
+                        requiredUserIds
+                );
+
+        User payer =
+                requireMemberUser(
+                        memberUsersById,
                         request.getPaidByUserId(),
                         "Payer must be a member of this group"
                 );
 
-        for (SplitInputRequest split : request.getSplits()) {
-
-            getGroupMemberUser(
-                    groupId,
-                    split.getUserId(),
-                    "All split participants must be members of this group"
-            );
-        }
+        validateSplitParticipants(
+                request.getSplits(),
+                memberUsersById
+        );
 
         SplitStrategy strategy =
                 splitStrategyResolver.resolve(
@@ -128,17 +150,12 @@ public class SharedExpenseWriteService {
                 );
 
         /*
-         * IMPORTANT FOR M23 CONCURRENCY:
+         * saveAndFlush deliberately forces the shared-expense
+         * INSERT here.
          *
-         * saveAndFlush forces the INSERT here.
-         *
-         * If another concurrent transaction already won
-         * the same (created_by, idempotency_key), the
-         * database UNIQUE constraint fails inside THIS
-         * transaction.
-         *
-         * This entire transaction then rolls back, including
-         * any work performed here.
+         * The database unique constraint on
+         * (created_by, idempotency_key) remains the final
+         * concurrency safeguard for M23.
          */
         SharedExpense savedExpense =
                 sharedExpenseRepository.saveAndFlush(
@@ -146,20 +163,14 @@ public class SharedExpenseWriteService {
                 );
 
         List<ExpenseSplit> expenseSplits =
-                calculatedSplits
-                        .stream()
+                calculatedSplits.stream()
                         .map(result -> {
 
                             User splitUser =
-                                    userRepository.findById(
-                                                    result.userId()
-                                            )
-                                            .orElseThrow(
-                                                    () ->
-                                                            new ResourceNotFoundException(
-                                                                    "User not found"
-                                                            )
-                                            );
+                                    requireLoadedUser(
+                                            memberUsersById,
+                                            result.userId()
+                                    );
 
                             return new ExpenseSplit(
                                     savedExpense,
@@ -218,26 +229,110 @@ public class SharedExpenseWriteService {
         return group;
     }
 
-    private User getGroupMemberUser(
+    private Set<Long> collectRequiredUserIds(
+            SharedExpenseCreateRequest request
+    ) {
+
+        Set<Long> requiredUserIds =
+                new LinkedHashSet<>();
+
+        requiredUserIds.add(
+                request.getPaidByUserId()
+        );
+
+        for (SplitInputRequest split
+                : request.getSplits()) {
+
+            requiredUserIds.add(
+                    split.getUserId()
+            );
+        }
+
+        return requiredUserIds;
+    }
+
+    private Map<Long, User> loadMemberUsers(
             Long groupId,
+            Set<Long> requiredUserIds
+    ) {
+
+        List<GroupMember> memberships =
+                groupMemberRepository.findMembersWithUsers(
+                        groupId,
+                        requiredUserIds
+                );
+
+        Map<Long, User> memberUsersById =
+                new HashMap<>();
+
+        for (GroupMember membership : memberships) {
+
+            User user =
+                    membership.getUser();
+
+            memberUsersById.put(
+                    user.getId(),
+                    user
+            );
+        }
+
+        return memberUsersById;
+    }
+
+    private User requireMemberUser(
+            Map<Long, User> memberUsersById,
             Long userId,
             String errorMessage
     ) {
 
-        GroupMember membership =
-                groupMemberRepository
-                        .findByGroupIdAndUserId(
-                                groupId,
-                                userId
-                        )
-                        .orElseThrow(
-                                () ->
-                                        new InvalidRequestException(
-                                                errorMessage
-                                        )
-                        );
+        User user =
+                memberUsersById.get(userId);
 
-        return membership.getUser();
+        if (user == null) {
+            throw new InvalidRequestException(
+                    errorMessage
+            );
+        }
+
+        return user;
+    }
+
+    private void validateSplitParticipants(
+            List<SplitInputRequest> splits,
+            Map<Long, User> memberUsersById
+    ) {
+
+        for (SplitInputRequest split : splits) {
+
+            requireMemberUser(
+                    memberUsersById,
+                    split.getUserId(),
+                    "All split participants must be members of this group"
+            );
+        }
+    }
+
+    private User requireLoadedUser(
+            Map<Long, User> memberUsersById,
+            Long userId
+    ) {
+
+        User user =
+                memberUsersById.get(userId);
+
+        /*
+         * Strategies should return only the user IDs supplied
+         * in the validated request. This guard prevents an
+         * invalid strategy result from creating an expense
+         * split for an unknown user.
+         */
+        if (user == null) {
+            throw new ResourceNotFoundException(
+                    "User not found"
+            );
+        }
+
+        return user;
     }
 
     private void validateDuplicateSplitUsers(
