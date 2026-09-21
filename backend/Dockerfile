@@ -3,7 +3,7 @@
 # ============================================================
 # Stage 1: Build the Spring Boot application
 # ============================================================
-FROM maven:3.9.11-eclipse-temurin-21-alpine AS builder
+FROM maven:3.9.15-eclipse-temurin-26-alpine AS builder
 
 WORKDIR /workspace
 
