@@ -53,3 +53,23 @@ jobs:
           path: backend/target/site/jacoco/
           if-no-files-found: error
           retention-days: 14
+
+  dependency-review:
+    name: Dependency Security Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
+          vulnerability-check: true
+          license-check: true
+          show-patched-versions: true
