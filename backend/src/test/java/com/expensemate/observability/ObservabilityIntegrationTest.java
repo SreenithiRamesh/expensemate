@@ -313,11 +313,17 @@ class ObservabilityIntegrationTest {
                                 .value(400)
                 )
                 .andExpect(
-                        jsonPath("$.message")
+                        jsonPath("$.title")
                                 .value("Validation failed")
                 )
                 .andExpect(
-                        jsonPath("$.path")
+                        jsonPath("$.detail")
+                                .value(
+                                        "One or more request fields are invalid"
+                                )
+                )
+                .andExpect(
+                        jsonPath("$.instance")
                                 .value("/api/v1/auth/register")
                 )
                 .andExpect(
@@ -369,13 +375,13 @@ class ObservabilityIntegrationTest {
                                 .value(400)
                 )
                 .andExpect(
-                        jsonPath("$.message")
+                        jsonPath("$.detail")
                                 .value(
-                                        "Invalid request body or unsupported value"
+                                        "The request body is malformed or contains an unsupported value"
                                 )
                 )
                 .andExpect(
-                        jsonPath("$.path")
+                        jsonPath("$.instance")
                                 .value("/api/v1/auth/register")
                 )
                 .andExpect(

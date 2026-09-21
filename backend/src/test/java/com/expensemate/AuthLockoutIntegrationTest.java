@@ -64,7 +64,7 @@ class AuthLockoutIntegrationTest {
             wrongPasswordLogin()
                     .andExpect(status().isUnauthorized())
                     .andExpect(
-                            jsonPath("$.message")
+                            jsonPath("$.detail")
                                     .value(
                                             "Invalid email or password"
                                     )
@@ -102,7 +102,7 @@ class AuthLockoutIntegrationTest {
         correctPasswordLogin()
                 .andExpect(status().isUnauthorized())
                 .andExpect(
-                        jsonPath("$.message")
+                        jsonPath("$.detail")
                                 .value(
                                         "Invalid email or password"
                                 )
@@ -285,7 +285,7 @@ class AuthLockoutIntegrationTest {
                 )
                 .andExpect(status().isUnauthorized())
                 .andExpect(
-                        jsonPath("$.message")
+                        jsonPath("$.detail")
                                 .value(
                                         "Invalid email or password"
                                 )

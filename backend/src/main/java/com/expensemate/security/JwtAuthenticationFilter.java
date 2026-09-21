@@ -1,9 +1,11 @@
 package com.expensemate.security;
 
+import com.expensemate.exception.ApiProblemFactory;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -15,17 +17,26 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 @Component
-public class JwtAuthenticationFilter extends OncePerRequestFilter {
+public class JwtAuthenticationFilter
+        extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final CustomUserDetailsService userDetailsService;
+    private final ApiProblemFactory problemFactory;
 
     public JwtAuthenticationFilter(
             JwtService jwtService,
-            CustomUserDetailsService userDetailsService
+            CustomUserDetailsService userDetailsService,
+            ApiProblemFactory problemFactory
     ) {
-        this.jwtService = jwtService;
-        this.userDetailsService = userDetailsService;
+        this.jwtService =
+                jwtService;
+
+        this.userDetailsService =
+                userDetailsService;
+
+        this.problemFactory =
+                problemFactory;
     }
 
     @Override
@@ -35,25 +46,58 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             FilterChain filterChain
     ) throws ServletException, IOException {
 
-        String authHeader = request.getHeader("Authorization");
+        String authHeader =
+                request.getHeader(
+                        "Authorization"
+                );
 
-        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            filterChain.doFilter(request, response);
+        if (authHeader == null
+                || !authHeader.startsWith(
+                "Bearer "
+        )) {
+
+            filterChain.doFilter(
+                    request,
+                    response
+            );
+
             return;
         }
 
-        String token = authHeader.substring(7);
+        String token =
+                authHeader.substring(7);
+
+        if (token.isBlank()) {
+
+            writeInvalidTokenProblem(
+                    request,
+                    response
+            );
+
+            return;
+        }
 
         try {
-            String email = jwtService.extractEmail(token);
+            String email =
+                    jwtService.extractEmail(
+                            token
+                    );
 
             if (email != null
-                    && SecurityContextHolder.getContext().getAuthentication() == null) {
+                    && SecurityContextHolder
+                    .getContext()
+                    .getAuthentication() == null) {
 
                 UserDetails userDetails =
-                        userDetailsService.loadUserByUsername(email);
+                        userDetailsService
+                                .loadUserByUsername(
+                                        email
+                                );
 
-                if (jwtService.isTokenValid(token, userDetails.getUsername())) {
+                if (jwtService.isTokenValid(
+                        token,
+                        userDetails.getUsername()
+                )) {
 
                     UsernamePasswordAuthenticationToken authentication =
                             new UsernamePasswordAuthenticationToken(
@@ -64,15 +108,33 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                     authentication.setDetails(
                             new WebAuthenticationDetailsSource()
-                                    .buildDetails(request)
+                                    .buildDetails(
+                                            request
+                                    )
                     );
 
                     SecurityContext securityContext =
-                            SecurityContextHolder.createEmptyContext();
+                            SecurityContextHolder
+                                    .createEmptyContext();
 
-                    securityContext.setAuthentication(authentication);
+                    securityContext.setAuthentication(
+                            authentication
+                    );
 
-                    SecurityContextHolder.setContext(securityContext);
+                    SecurityContextHolder.setContext(
+                            securityContext
+                    );
+
+                } else {
+
+                    SecurityContextHolder.clearContext();
+
+                    writeInvalidTokenProblem(
+                            request,
+                            response
+                    );
+
+                    return;
                 }
             }
 
@@ -80,14 +142,32 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             SecurityContextHolder.clearContext();
 
-            response.sendError(
-                    HttpServletResponse.SC_UNAUTHORIZED,
-                    "Invalid or expired token"
+            writeInvalidTokenProblem(
+                    request,
+                    response
             );
 
             return;
         }
 
-        filterChain.doFilter(request, response);
+        filterChain.doFilter(
+                request,
+                response
+        );
+    }
+
+    private void writeInvalidTokenProblem(
+            HttpServletRequest request,
+            HttpServletResponse response
+    ) throws IOException {
+
+        problemFactory.write(
+                response,
+                HttpStatus.UNAUTHORIZED,
+                "invalid-access-token",
+                "Invalid access token",
+                "The access token is invalid or has expired",
+                request
+        );
     }
 }

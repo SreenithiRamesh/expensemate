@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
@@ -15,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -28,6 +30,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 })
 class ApiRateLimitIntegrationTest {
 
+    private static final String PROBLEM_TYPE =
+            "https://api.expensemate.com/problems/"
+                    + "rate-limit-exceeded";
+
+    private static final String RATE_LIMIT_DETAIL =
+            "Rate limit exceeded. Please try again later.";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -36,11 +45,11 @@ class ApiRateLimitIntegrationTest {
             throws Exception {
 
         /*
-         * Invalid request data deliberately causes validation
-         * to return 400 before AuthService accesses the database.
+         * Invalid data deliberately returns 400 before the
+         * authentication service accesses the database.
          *
-         * The purpose of this test is the HTTP rate limiter,
-         * not authentication or database behaviour.
+         * This test validates rate limiting rather than
+         * authentication or database behaviour.
          */
         String body = """
                 {
@@ -51,10 +60,15 @@ class ApiRateLimitIntegrationTest {
 
         mockMvc.perform(
                         post("/api/v1/auth/login")
-                                .contentType("application/json")
+                                .contentType(
+                                        MediaType.APPLICATION_JSON
+                                )
                                 .content(body)
                                 .with(request -> {
-                                    request.setRemoteAddr("10.0.0.1");
+                                    request.setRemoteAddr(
+                                            "10.0.0.1"
+                                    );
+
                                     return request;
                                 })
                 )
@@ -64,10 +78,15 @@ class ApiRateLimitIntegrationTest {
 
         mockMvc.perform(
                         post("/api/v1/auth/login")
-                                .contentType("application/json")
+                                .contentType(
+                                        MediaType.APPLICATION_JSON
+                                )
                                 .content(body)
                                 .with(request -> {
-                                    request.setRemoteAddr("10.0.0.1");
+                                    request.setRemoteAddr(
+                                            "10.0.0.1"
+                                    );
+
                                     return request;
                                 })
                 )
@@ -76,16 +95,21 @@ class ApiRateLimitIntegrationTest {
                 );
 
         /*
-         * Third request from the same client exceeds
-         * the configured auth limit of 2 requests/minute.
+         * The third request from the same client exceeds
+         * the configured limit of two requests per minute.
          */
         MvcResult result =
                 mockMvc.perform(
                                 post("/api/v1/auth/login")
-                                        .contentType("application/json")
+                                        .contentType(
+                                                MediaType.APPLICATION_JSON
+                                        )
                                         .content(body)
                                         .with(request -> {
-                                            request.setRemoteAddr("10.0.0.1");
+                                            request.setRemoteAddr(
+                                                    "10.0.0.1"
+                                            );
+
                                             return request;
                                         })
                         )
@@ -93,25 +117,57 @@ class ApiRateLimitIntegrationTest {
                                 status().isTooManyRequests()
                         )
                         .andExpect(
-                                header().exists(
-                                        "Retry-After"
+                                content().contentTypeCompatibleWith(
+                                        MediaType.APPLICATION_PROBLEM_JSON
                                 )
+                        )
+                        .andExpect(
+                                header().exists(
+                                        HttpHeaders.RETRY_AFTER
+                                )
+                        )
+                        .andExpect(
+                                header().exists(
+                                        "X-Correlation-ID"
+                                )
+                        )
+                        .andExpect(
+                                jsonPath("$.type")
+                                        .value(PROBLEM_TYPE)
+                        )
+                        .andExpect(
+                                jsonPath("$.title")
+                                        .value(
+                                                "Too many requests"
+                                        )
                         )
                         .andExpect(
                                 jsonPath("$.status")
                                         .value(429)
                         )
                         .andExpect(
-                                jsonPath("$.error")
+                                jsonPath("$.detail")
                                         .value(
-                                                "Too Many Requests"
+                                                RATE_LIMIT_DETAIL
                                         )
                         )
                         .andExpect(
-                                jsonPath("$.message")
+                                jsonPath("$.instance")
                                         .value(
-                                                "Rate limit exceeded. Please try again later."
+                                                "/api/v1/auth/login"
                                         )
+                        )
+                        .andExpect(
+                                jsonPath("$.timestamp")
+                                        .isNotEmpty()
+                        )
+                        .andExpect(
+                                jsonPath("$.correlationId")
+                                        .isNotEmpty()
+                        )
+                        .andExpect(
+                                jsonPath("$.retryAfterSeconds")
+                                        .isNumber()
                         )
                         .andReturn();
 
@@ -130,13 +186,18 @@ class ApiRateLimitIntegrationTest {
                 """;
 
         /*
-         * Consume the full auth allowance for client 10.0.0.2.
+         * Consume the full authentication allowance for
+         * the first client.
          */
-        for (int i = 0; i < 2; i++) {
+        for (int index = 0;
+             index < 2;
+             index++) {
 
             mockMvc.perform(
                             post("/api/v1/auth/login")
-                                    .contentType("application/json")
+                                    .contentType(
+                                            MediaType.APPLICATION_JSON
+                                    )
                                     .content(body)
                                     .with(request -> {
                                         request.setRemoteAddr(
@@ -152,12 +213,14 @@ class ApiRateLimitIntegrationTest {
         }
 
         /*
-         * A different client must have its own
-         * independent rate-limit window.
+         * A different client must receive an independent
+         * rate-limit window.
          */
         mockMvc.perform(
                         post("/api/v1/auth/login")
-                                .contentType("application/json")
+                                .contentType(
+                                        MediaType.APPLICATION_JSON
+                                )
                                 .content(body)
                                 .with(request -> {
                                     request.setRemoteAddr(
@@ -182,8 +245,8 @@ class ApiRateLimitIntegrationTest {
          * Without a JWT, the first two requests reach
          * Spring Security and return 401.
          *
-         * The rate limiter executes before JWT authentication,
-         * so the third request should be rejected with 429.
+         * The rate limiter executes before authentication,
+         * so the third request must return 429.
          */
         mockMvc.perform(
                         get("/api/v1/expenses")
@@ -228,9 +291,57 @@ class ApiRateLimitIntegrationTest {
                                 status().isTooManyRequests()
                         )
                         .andExpect(
-                                header().exists(
-                                        "Retry-After"
+                                content().contentTypeCompatibleWith(
+                                        MediaType.APPLICATION_PROBLEM_JSON
                                 )
+                        )
+                        .andExpect(
+                                header().exists(
+                                        HttpHeaders.RETRY_AFTER
+                                )
+                        )
+                        .andExpect(
+                                header().exists(
+                                        "X-Correlation-ID"
+                                )
+                        )
+                        .andExpect(
+                                jsonPath("$.type")
+                                        .value(PROBLEM_TYPE)
+                        )
+                        .andExpect(
+                                jsonPath("$.title")
+                                        .value(
+                                                "Too many requests"
+                                        )
+                        )
+                        .andExpect(
+                                jsonPath("$.status")
+                                        .value(429)
+                        )
+                        .andExpect(
+                                jsonPath("$.detail")
+                                        .value(
+                                                RATE_LIMIT_DETAIL
+                                        )
+                        )
+                        .andExpect(
+                                jsonPath("$.instance")
+                                        .value(
+                                                "/api/v1/expenses"
+                                        )
+                        )
+                        .andExpect(
+                                jsonPath("$.timestamp")
+                                        .isNotEmpty()
+                        )
+                        .andExpect(
+                                jsonPath("$.correlationId")
+                                        .isNotEmpty()
+                        )
+                        .andExpect(
+                                jsonPath("$.retryAfterSeconds")
+                                        .isNumber()
                         )
                         .andReturn();
 
@@ -242,13 +353,12 @@ class ApiRateLimitIntegrationTest {
             throws Exception {
 
         /*
-         * Health is deliberately excluded from
+         * The public health endpoint is excluded from
          * application API rate limiting.
-         *
-         * More than two requests must therefore
-         * continue to succeed.
          */
-        for (int i = 0; i < 5; i++) {
+        for (int index = 0;
+             index < 5;
+             index++) {
 
             mockMvc.perform(
                             get("/api/v1/health")
@@ -272,9 +382,11 @@ class ApiRateLimitIntegrationTest {
 
         /*
          * Browser CORS preflight requests must not consume
-         * the normal application rate-limit allowance.
+         * the application rate-limit allowance.
          */
-        for (int i = 0; i < 5; i++) {
+        for (int index = 0;
+             index < 5;
+             index++) {
 
             mockMvc.perform(
                             options("/api/v1/expenses")
@@ -283,7 +395,8 @@ class ApiRateLimitIntegrationTest {
                                             "http://localhost:5173"
                                     )
                                     .header(
-                                            HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD,
+                                            HttpHeaders
+                                                    .ACCESS_CONTROL_REQUEST_METHOD,
                                             "GET"
                                     )
                                     .with(request -> {
@@ -304,8 +417,8 @@ class ApiRateLimitIntegrationTest {
      * Retry-After is dynamic because the limiter uses
      * fixed one-minute windows.
      *
-     * Therefore the correct value is between
-     * 1 and 60 seconds rather than always exactly 60.
+     * Therefore, its valid value is between one and
+     * sixty seconds.
      */
     private void assertValidRetryAfterHeader(
             MvcResult result
@@ -314,7 +427,7 @@ class ApiRateLimitIntegrationTest {
         String retryAfter =
                 result.getResponse()
                         .getHeader(
-                                "Retry-After"
+                                HttpHeaders.RETRY_AFTER
                         );
 
         assertNotNull(

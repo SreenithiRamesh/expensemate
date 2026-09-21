@@ -191,7 +191,7 @@ class AuthRefreshIntegrationTest {
         refresh(oldRefreshToken)
                 .andExpect(status().isUnauthorized())
                 .andExpect(
-                        jsonPath("$.message")
+                        jsonPath("$.detail")
                                 .value(
                                         "Invalid or expired refresh token"
                                 )
@@ -324,7 +324,7 @@ class AuthRefreshIntegrationTest {
                 )
                 .andExpect(status().isUnauthorized())
                 .andExpect(
-                        jsonPath("$.message")
+                        jsonPath("$.detail")
                                 .value(
                                         "Invalid or expired refresh token"
                                 )
@@ -350,7 +350,7 @@ class AuthRefreshIntegrationTest {
                 )
                 .andExpect(status().isBadRequest())
                 .andExpect(
-                        jsonPath("$.message")
+                        jsonPath("$.title")
                                 .value("Validation failed")
                 );
     }

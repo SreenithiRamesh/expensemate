@@ -1,5 +1,6 @@
 package com.expensemate.security;
 
+import com.expensemate.exception.ApiProblemFactory;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,16 +17,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
-public class ApiRateLimitFilter extends OncePerRequestFilter {
+public class ApiRateLimitFilter
+        extends OncePerRequestFilter {
 
-    private static final long WINDOW_SECONDS = 60L;
+    private static final long WINDOW_SECONDS =
+            60L;
 
-    /*
-     * Cleanup does not need to run on every request.
-     * Running it periodically keeps stale client entries
-     * from accumulating indefinitely.
-     */
-    private static final long CLEANUP_INTERVAL_SECONDS = 60L;
+    private static final long CLEANUP_INTERVAL_SECONDS =
+            60L;
 
     private final Map<String, RateLimitWindow> authWindows =
             new ConcurrentHashMap<>();
@@ -38,19 +37,22 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
 
     private final int authRequestsPerMinute;
     private final int apiRequestsPerMinute;
+    private final ApiProblemFactory problemFactory;
 
     public ApiRateLimitFilter(
             @Value("${app.rate-limit.auth.requests-per-minute:10}")
             int authRequestsPerMinute,
 
             @Value("${app.rate-limit.api.requests-per-minute:120}")
-            int apiRequestsPerMinute
+            int apiRequestsPerMinute,
+
+            ApiProblemFactory problemFactory
     ) {
 
         /*
-         * Invalid security configuration should fail fast
-         * instead of silently disabling or breaking
-         * rate-limit behaviour.
+         * Invalid security configuration must fail during
+         * application startup rather than silently disabling
+         * rate-limit protection.
          */
         if (authRequestsPerMinute <= 0) {
             throw new IllegalArgumentException(
@@ -69,6 +71,9 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
 
         this.apiRequestsPerMinute =
                 apiRequestsPerMinute;
+
+        this.problemFactory =
+                problemFactory;
     }
 
     @Override
@@ -82,7 +87,7 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
                 request.getRequestURI();
 
         /*
-         * CORS preflight requests should not consume
+         * CORS preflight requests must not consume normal
          * application rate-limit capacity.
          */
         if ("OPTIONS".equalsIgnoreCase(
@@ -98,9 +103,8 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
         }
 
         /*
-         * Health and API documentation endpoints are
-         * intentionally excluded from application
-         * rate limiting.
+         * Health and API documentation endpoints are excluded
+         * from application rate limiting.
          */
         if (isExcludedPath(path)) {
 
@@ -116,48 +120,27 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
                 Instant.now()
                         .getEpochSecond();
 
-        /*
-         * Remove expired client windows periodically.
-         *
-         * Without cleanup, attacker-controlled IP addresses
-         * could leave stale entries in these maps forever.
-         */
-        cleanupExpiredWindowsIfNeeded(now);
+        cleanupExpiredWindowsIfNeeded(
+                now
+        );
 
         String clientKey =
-                resolveClientKey(request);
+                resolveClientKey(
+                        request
+                );
 
-        RateLimitResult result = null;
-
-        if (path.startsWith(
-                "/api/v1/auth/"
-        )) {
-
-            result =
-                    consume(
-                            authWindows,
-                            clientKey,
-                            authRequestsPerMinute,
-                            now
-                    );
-
-        } else if (path.startsWith(
-                "/api/v1/"
-        )) {
-
-            result =
-                    consume(
-                            apiWindows,
-                            clientKey,
-                            apiRequestsPerMinute,
-                            now
-                    );
-        }
+        RateLimitResult result =
+                resolveRateLimitResult(
+                        path,
+                        clientKey,
+                        now
+                );
 
         if (result != null
                 && !result.allowed()) {
 
             writeRateLimitResponse(
+                    request,
                     response,
                     result.retryAfterSeconds()
             );
@@ -169,6 +152,39 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
                 request,
                 response
         );
+    }
+
+    private RateLimitResult resolveRateLimitResult(
+            String path,
+            String clientKey,
+            long now
+    ) {
+
+        if (path.startsWith(
+                "/api/v1/auth/"
+        )) {
+
+            return consume(
+                    authWindows,
+                    clientKey,
+                    authRequestsPerMinute,
+                    now
+            );
+        }
+
+        if (path.startsWith(
+                "/api/v1/"
+        )) {
+
+            return consume(
+                    apiWindows,
+                    clientKey,
+                    apiRequestsPerMinute,
+                    now
+            );
+        }
+
+        return null;
     }
 
     private RateLimitResult consume(
@@ -208,9 +224,8 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
                         <= maximumRequests;
 
         /*
-         * Retry-After should represent the number of
-         * seconds remaining until the current fixed
-         * one-minute window resets.
+         * Retry-After represents the number of seconds
+         * remaining before the fixed window resets.
          */
         long retryAfterSeconds =
                 Math.max(
@@ -242,8 +257,8 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
         }
 
         /*
-         * Only one request should perform cleanup for
-         * a particular cleanup interval.
+         * Allow only one request to perform cleanup during
+         * each cleanup interval.
          */
         if (!lastCleanupEpochSecond.compareAndSet(
                 previousCleanup,
@@ -273,19 +288,14 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
     ) {
 
         /*
-         * ConcurrentHashMap supports safe concurrent
-         * conditional removal while requests are updating
-         * other entries.
-         *
-         * Keep the current window and remove only entries
-         * belonging to older windows.
+         * ConcurrentHashMap supports concurrent conditional
+         * removal while other requests update active entries.
          */
         windows.entrySet()
-                .removeIf(
-                        entry ->
-                                entry.getValue()
-                                        .window()
-                                        < currentWindow
+                .removeIf(entry ->
+                        entry.getValue()
+                                .window()
+                                < currentWindow
                 );
     }
 
@@ -294,14 +304,9 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
     ) {
 
         /*
-         * Do not trust X-Forwarded-For yet.
-         *
-         * Forwarded headers can be spoofed unless the
-         * application is behind a trusted proxy that
-         * overwrites them.
-         *
-         * Proxy-aware client-IP handling should be added
-         * when the deployment environment is fixed.
+         * X-Forwarded-For is intentionally not trusted until
+         * the application is deployed behind a trusted proxy
+         * that overwrites forwarded headers.
          */
         String remoteAddress =
                 request.getRemoteAddr();
@@ -331,22 +336,15 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
     }
 
     private void writeRateLimitResponse(
+            HttpServletRequest request,
             HttpServletResponse response,
             long retryAfterSeconds
     ) throws IOException {
 
-        response.setStatus(
-                HttpStatus.TOO_MANY_REQUESTS.value()
-        );
-
-        response.setContentType(
-                "application/json"
-        );
-
-        response.setCharacterEncoding(
-                "UTF-8"
-        );
-
+        /*
+         * Preserve Retry-After while ApiProblemFactory writes
+         * the RFC 7807 response body.
+         */
         response.setHeader(
                 "Retry-After",
                 Long.toString(
@@ -354,16 +352,24 @@ public class ApiRateLimitFilter extends OncePerRequestFilter {
                 )
         );
 
-        response.getWriter()
-                .write(
-                        """
-                        {
-                          "status": 429,
-                          "error": "Too Many Requests",
-                          "message": "Rate limit exceeded. Please try again later."
-                        }
-                        """
+        var problem =
+                problemFactory.create(
+                        HttpStatus.TOO_MANY_REQUESTS,
+                        "rate-limit-exceeded",
+                        "Too many requests",
+                        "Rate limit exceeded. Please try again later.",
+                        request
                 );
+
+        problem.setProperty(
+                "retryAfterSeconds",
+                retryAfterSeconds
+        );
+
+        problemFactory.write(
+                response,
+                problem
+        );
     }
 
     private record RateLimitWindow(

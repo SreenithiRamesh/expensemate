@@ -1,5 +1,6 @@
 package com.expensemate.security;
 
+import com.expensemate.exception.ApiProblemFactory;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -7,14 +8,21 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.User;
 import org.springframework.security.core.userdetails.UserDetails;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class JwtAuthenticationFilterTest {
@@ -24,6 +32,9 @@ class JwtAuthenticationFilterTest {
 
     @Mock
     private CustomUserDetailsService userDetailsService;
+
+    @Mock
+    private ApiProblemFactory problemFactory;
 
     @Mock
     private FilterChain filterChain;
@@ -38,7 +49,8 @@ class JwtAuthenticationFilterTest {
         filter =
                 new JwtAuthenticationFilter(
                         jwtService,
-                        userDetailsService
+                        userDetailsService,
+                        problemFactory
                 );
     }
 
@@ -48,7 +60,7 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
-    void shouldContinueWithoutAuthenticationWhenAuthorizationHeaderMissing()
+    void shouldContinueWhenAuthorizationHeaderIsMissing()
             throws Exception {
 
         MockHttpServletRequest request =
@@ -64,7 +76,8 @@ class JwtAuthenticationFilterTest {
         );
 
         assertNull(
-                SecurityContextHolder.getContext()
+                SecurityContextHolder
+                        .getContext()
                         .getAuthentication()
         );
 
@@ -75,12 +88,13 @@ class JwtAuthenticationFilterTest {
 
         verifyNoInteractions(
                 jwtService,
-                userDetailsService
+                userDetailsService,
+                problemFactory
         );
     }
 
     @Test
-    void shouldContinueWithoutAuthenticationWhenHeaderIsNotBearer()
+    void shouldContinueWhenAuthorizationHeaderIsNotBearer()
             throws Exception {
 
         MockHttpServletRequest request =
@@ -101,7 +115,8 @@ class JwtAuthenticationFilterTest {
         );
 
         assertNull(
-                SecurityContextHolder.getContext()
+                SecurityContextHolder
+                        .getContext()
                         .getAuthentication()
         );
 
@@ -112,7 +127,8 @@ class JwtAuthenticationFilterTest {
 
         verifyNoInteractions(
                 jwtService,
-                userDetailsService
+                userDetailsService,
+                problemFactory
         );
     }
 
@@ -120,8 +136,11 @@ class JwtAuthenticationFilterTest {
     void shouldAuthenticateWhenBearerTokenIsValid()
             throws Exception {
 
-        String token = "valid-token";
-        String email = "sree@example.com";
+        String token =
+                "valid-token";
+
+        String email =
+                "sree@example.com";
 
         UserDetails userDetails =
                 User.withUsername(email)
@@ -162,7 +181,8 @@ class JwtAuthenticationFilterTest {
         );
 
         var authentication =
-                SecurityContextHolder.getContext()
+                SecurityContextHolder
+                        .getContext()
                         .getAuthentication();
 
         assertNotNull(authentication);
@@ -182,14 +202,21 @@ class JwtAuthenticationFilterTest {
                 request,
                 response
         );
+
+        verifyNoInteractions(
+                problemFactory
+        );
     }
 
     @Test
-    void shouldNotAuthenticateWhenTokenValidationReturnsFalse()
+    void shouldRejectTokenWhenValidationReturnsFalse()
             throws Exception {
 
-        String token = "invalid-token";
-        String email = "sree@example.com";
+        String token =
+                "invalid-token";
+
+        String email =
+                "sree@example.com";
 
         UserDetails userDetails =
                 User.withUsername(email)
@@ -213,12 +240,7 @@ class JwtAuthenticationFilterTest {
         ).thenReturn(false);
 
         MockHttpServletRequest request =
-                new MockHttpServletRequest();
-
-        request.addHeader(
-                "Authorization",
-                "Bearer " + token
-        );
+                bearerRequest(token);
 
         MockHttpServletResponse response =
                 new MockHttpServletResponse();
@@ -230,29 +252,110 @@ class JwtAuthenticationFilterTest {
         );
 
         assertNull(
-                SecurityContextHolder.getContext()
+                SecurityContextHolder
+                        .getContext()
                         .getAuthentication()
         );
 
-        verify(filterChain).doFilter(
+        verifyInvalidTokenProblem(
+                request,
+                response
+        );
+
+        verify(
+                filterChain,
+                never()
+        ).doFilter(
                 request,
                 response
         );
     }
 
     @Test
-    void shouldReturnUnauthorizedWhenTokenProcessingThrowsException()
+    void shouldRejectTokenWhenProcessingThrowsException()
             throws Exception {
 
-        String token = "broken-token";
+        String token =
+                "broken-token";
 
         when(
                 jwtService.extractEmail(token)
         ).thenThrow(
                 new RuntimeException(
-                        "Invalid token"
+                        "Sensitive parser detail"
                 )
         );
+
+        MockHttpServletRequest request =
+                bearerRequest(token);
+
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
+        filter.doFilter(
+                request,
+                response,
+                filterChain
+        );
+
+        assertNull(
+                SecurityContextHolder
+                        .getContext()
+                        .getAuthentication()
+        );
+
+        verifyInvalidTokenProblem(
+                request,
+                response
+        );
+
+        verify(
+                filterChain,
+                never()
+        ).doFilter(
+                request,
+                response
+        );
+    }
+
+    @Test
+    void shouldRejectBlankBearerToken()
+            throws Exception {
+
+        MockHttpServletRequest request =
+                bearerRequest("");
+
+        MockHttpServletResponse response =
+                new MockHttpServletResponse();
+
+        filter.doFilter(
+                request,
+                response,
+                filterChain
+        );
+
+        verifyInvalidTokenProblem(
+                request,
+                response
+        );
+
+        verifyNoInteractions(
+                jwtService,
+                userDetailsService
+        );
+
+        verify(
+                filterChain,
+                never()
+        ).doFilter(
+                request,
+                response
+        );
+    }
+
+    private MockHttpServletRequest bearerRequest(
+            String token
+    ) {
 
         MockHttpServletRequest request =
                 new MockHttpServletRequest();
@@ -262,31 +365,21 @@ class JwtAuthenticationFilterTest {
                 "Bearer " + token
         );
 
-        MockHttpServletResponse response =
-                new MockHttpServletResponse();
+        return request;
+    }
 
-        filter.doFilter(
-                request,
+    private void verifyInvalidTokenProblem(
+            MockHttpServletRequest request,
+            MockHttpServletResponse response
+    ) throws Exception {
+
+        verify(problemFactory).write(
                 response,
-                filterChain
-        );
-
-        assertEquals(
-                401,
-                response.getStatus()
-        );
-
-        assertNull(
-                SecurityContextHolder.getContext()
-                        .getAuthentication()
-        );
-
-        verify(
-                filterChain,
-                never()
-        ).doFilter(
-                request,
-                response
+                HttpStatus.UNAUTHORIZED,
+                "invalid-access-token",
+                "Invalid access token",
+                "The access token is invalid or has expired",
+                request
         );
     }
 }
