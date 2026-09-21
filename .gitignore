@@ -32,8 +32,13 @@ build/
 ### VS Code ###
 .vscode/
 # Environment / secrets
+# Ignore real environment files
 .env
 .env.*
+
+# Allow safe environment templates
+!.env.example
+!**/.env.example
 application-local.properties
 
 # Logs

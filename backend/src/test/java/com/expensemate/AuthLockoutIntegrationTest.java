@@ -45,7 +45,12 @@ class AuthLockoutIntegrationTest {
         createRequiredTables();
 
         refreshTokenRepository.deleteAll();
-        userRepository.deleteAll();
+
+        userRepository
+                .findByEmail("lockout-test@example.com")
+                .ifPresent(userRepository::delete);
+
+        userRepository.flush();
 
         registerUser();
     }

@@ -1,0 +1,57 @@
+# Maven build output
+target/
+*.jar
+
+# Git metadata
+.git/
+.gitignore
+.gitattributes
+
+# GitHub configuration is not required inside the image
+.github/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Visual Studio Code
+.vscode/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and reports
+*.log
+logs/
+jacoco.exec
+coverage/
+surefire-reports/
+
+# Local environment and secret files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Docker development files are not application source
+docker-compose*.yml
+docker-compose*.yaml
+
+# Documentation
+README.md
+docs/
+
+# Temporary and backup files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~

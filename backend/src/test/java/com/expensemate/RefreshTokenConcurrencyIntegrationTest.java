@@ -45,7 +45,12 @@ class RefreshTokenConcurrencyIntegrationTest {
         createRequiredTables();
 
         refreshTokenRepository.deleteAll();
-        userRepository.deleteAll();
+
+        userRepository
+                .findByEmail("concurrency@example.com")
+                .ifPresent(userRepository::delete);
+
+        userRepository.flush();
     }
 
     @Test

@@ -1,0 +1,59 @@
+version: 2
+
+updates:
+  # Spring Boot and Maven dependencies.
+  - package-ecosystem: "maven"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      spring-dependencies:
+        patterns:
+          - "org.springframework*"
+          - "org.springframework.boot*"
+          - "org.springframework.security*"
+      test-dependencies:
+        patterns:
+          - "org.junit*"
+          - "org.mockito*"
+          - "org.assertj*"
+
+  # Docker base images used by the backend.
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:15"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+
+  # Third-party GitHub Actions.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:30"
+      timezone: "Asia/Kolkata"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "deps(ci)"
