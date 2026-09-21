@@ -30,7 +30,7 @@ RUN mvn --batch-mode \
 # ============================================================
 # Stage 2: Minimal Java runtime image
 # ============================================================
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:25-jre-alpine AS runtime
 
 LABEL org.opencontainers.image.title="ExpenseMate Backend"
 LABEL org.opencontainers.image.description="Spring Boot backend for ExpenseMate"
