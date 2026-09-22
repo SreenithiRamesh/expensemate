@@ -1,48 +1,100 @@
-import { useId, useState } from 'react'
+import { useState } from 'react'
 
 import { DashboardEmptyState } from './DashboardEmptyState'
 
-// UI-preview data only — replaced with real TanStack Query data in M32.
-// Values are illustrative and clearly not wired to a backend.
-const sampleSeries = {
-    weekly: {
-        labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-        income: [0, 0, 4200, 0, 0, 0, 6000],
-        expense: [820, 640, 1450, 900, 2100, 3200, 1180],
-    },
-    monthly: {
-        labels: ['Wk 1', 'Wk 2', 'Wk 3', 'Wk 4'],
-        income: [10200, 0, 0, 6000],
-        expense: [5230, 6110, 7440, 4390],
-    },
+function formatCurrency(value) {
+    return `₹${value.toLocaleString('en-IN', {
+        maximumFractionDigits: 2,
+    })}`
 }
 
-const categorySummary = [
-    { label: 'Food & dining', value: 6240, color: '#159FA4' },
-    { label: 'Travel', value: 4120, color: '#3E8EF7' },
-    { label: 'Shopping', value: 3080, color: '#E9B949' },
-    { label: 'Bills', value: 5010, color: '#2F9E6F' },
-]
-
-function buildPath(values, width, height, max) {
-    return values
-        .map((value, index) => {
-            const x = (index / (values.length - 1 || 1)) * width
-            const y = height - (value / max) * height
-            return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`
-        })
-        .join(' ')
-}
-
-export function SpendingChart({ hasData = true }) {
+export function SpendingChart({
+                                  series = {},
+                                  monthlyBudget = 0,
+                                  monthlySpending = 0,
+                                  isPreview = false,
+                                  hasData = true,
+                              }) {
     const [period, setPeriod] = useState('monthly')
-    const gradientId = useId()
-    const [hoverIndex, setHoverIndex] = useState(null)
+    const [selectedIndex, setSelectedIndex] = useState(null)
 
-    if (!hasData) {
-        return (
-            <article className="rounded-3xl border border-white/80 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
-                <SpendingChartHeader period={period} onChange={setPeriod} />
+    const currentSeries = series[period]
+    const points = currentSeries?.points ?? []
+    const categories = currentSeries?.categories ?? []
+
+    const totalSpending = points.reduce(
+        (total, point) => total + point.amount,
+        0,
+    )
+
+    const maximumAmount = Math.max(
+        ...points.map((point) => point.amount),
+        1,
+    )
+
+    // Round the chart scale up to a readable rupee amount.
+    const axisMaximum = Math.max(
+        1000,
+        Math.ceil(maximumAmount / 1000) * 1000,
+    )
+
+    const remainingBudget = monthlyBudget - monthlySpending
+    const hasBudget = monthlyBudget > 0
+    const isOverBudget = hasBudget && remainingBudget < 0
+
+    const selectedPoint =
+        selectedIndex === null ? null : points[selectedIndex]
+
+    function changePeriod(nextPeriod) {
+        setPeriod(nextPeriod)
+        setSelectedIndex(null)
+    }
+
+    return (
+        <article className="min-w-0 rounded-3xl border border-white/80 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <h2 className="text-xl font-bold text-heading">
+                        Spending overview
+                    </h2>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                        {period === 'monthly'
+                            ? 'Your expenses grouped by week.'
+                            : 'Your expenses grouped by day.'}
+                    </p>
+                </div>
+
+                <div
+                    role="group"
+                    aria-label="Select time period"
+                    className="inline-flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-semibold"
+                >
+                    {['weekly', 'monthly'].map((option) => (
+                        <button
+                            key={option}
+                            type="button"
+                            aria-pressed={period === option}
+                            onClick={() => changePeriod(option)}
+                            className={`min-h-10 rounded-lg px-3 capitalize transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 ${
+                                period === option
+                                    ? 'bg-brand-600 text-white shadow-sm'
+                                    : 'text-slate-500 hover:bg-brand-50 hover:text-brand-700'
+                            }`}
+                        >
+                            {option}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {isPreview && (
+                <p className="mt-4 inline-flex rounded-full bg-brand-50 px-3 py-1 text-xs font-bold text-brand-700">
+                    Sample data — preview only
+                </p>
+            )}
+
+            {!hasData || points.length === 0 ? (
                 <div className="mt-6">
                     <DashboardEmptyState
                         variant="receipt"
@@ -50,174 +102,212 @@ export function SpendingChart({ hasData = true }) {
                         description="Add a few expenses and your spending trend will show up here."
                     />
                 </div>
-            </article>
-        )
-    }
+            ) : (
+                <>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-2xl bg-brand-50/80 p-3">
+                            <p className="text-xs font-semibold text-brand-700">
+                                {period === 'monthly'
+                                    ? 'Spent this month'
+                                    : 'Spent this week'}
+                            </p>
+                            <p className="mt-1 text-xl font-black text-heading">
+                                {formatCurrency(totalSpending)}
+                            </p>
+                        </div>
 
-    const { labels, income, expense } = sampleSeries[period]
-    const max = Math.max(...income, ...expense, 1)
-    const width = 560
-    const height = 200
+                        <div className="rounded-2xl bg-slate-50 p-3">
+                            <p className="text-xs font-semibold text-slate-500">
+                                Monthly budget
+                            </p>
+                            <p className="mt-1 text-xl font-black text-heading">
+                                {hasBudget
+                                    ? formatCurrency(monthlyBudget)
+                                    : 'Not set'}
+                            </p>
+                        </div>
 
-    const incomePath = buildPath(income, width, height, max)
-    const expensePath = buildPath(expense, width, height, max)
+                        <div
+                            className={`rounded-2xl p-3 ${
+                                isOverBudget
+                                    ? 'bg-rose-50'
+                                    : 'bg-emerald-50/70'
+                            }`}
+                        >
+                            <p
+                                className={`text-xs font-semibold ${
+                                    isOverBudget
+                                        ? 'text-rose-700'
+                                        : 'text-emerald-700'
+                                }`}
+                            >
+                                {isOverBudget
+                                    ? 'Over monthly budget'
+                                    : 'Remaining this month'}
+                            </p>
+                            <p
+                                className={`mt-1 text-xl font-black ${
+                                    isOverBudget
+                                        ? 'text-rose-700'
+                                        : 'text-heading'
+                                }`}
+                            >
+                                {hasBudget
+                                    ? formatCurrency(Math.abs(remainingBudget))
+                                    : '—'}
+                            </p>
+                        </div>
+                    </div>
 
-    return (
-        <article className="rounded-3xl border border-white/80 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
-            <SpendingChartHeader period={period} onChange={setPeriod} />
-
-            <div className="mt-4 flex flex-wrap items-center gap-4 text-sm font-semibold text-slate-500">
-                <span className="inline-flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-brand-600" aria-hidden="true" />
-                    Income
-                </span>
-                <span className="inline-flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#E2665A]" aria-hidden="true" />
-                    Expense
-                </span>
-                <span className="ml-auto rounded-full bg-brand-50 px-2.5 py-1 text-xs font-bold text-brand-700">
-                    Sample data — preview only
-                </span>
-            </div>
-
-            <div className="relative mt-4">
-                <svg
-                    viewBox={`0 0 ${width} ${height}`}
-                    className="h-56 w-full"
-                    role="img"
-                    aria-label={`${period === 'monthly' ? 'Monthly' : 'Weekly'} income versus expense trend`}
-                >
-                    <defs>
-                        <linearGradient id={`${gradientId}-expense`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#E2665A" stopOpacity="0.25" />
-                            <stop offset="100%" stopColor="#E2665A" stopOpacity="0" />
-                        </linearGradient>
-                    </defs>
-
-                    <path
-                        d={`${expensePath} L${width},${height} L0,${height} Z`}
-                        fill={`url(#${gradientId}-expense)`}
-                        stroke="none"
-                    />
-                    <path d={expensePath} fill="none" stroke="#E2665A" strokeWidth="2.5" strokeLinecap="round" />
-                    <path d={incomePath} fill="none" stroke="#159FA4" strokeWidth="2.5" strokeLinecap="round" />
-
-                    {labels.map((_, index) => {
-                        const x = (index / (labels.length - 1 || 1)) * width
-                        return (
-                            <rect
-                                key={index}
-                                x={x - width / labels.length / 2}
-                                y={0}
-                                width={width / labels.length}
-                                height={height}
-                                fill="transparent"
-                                onMouseEnter={() => setHoverIndex(index)}
-                                onMouseLeave={() => setHoverIndex(null)}
-                                onFocus={() => setHoverIndex(index)}
-                                onBlur={() => setHoverIndex(null)}
-                                tabIndex={0}
-                                role="img"
-                                aria-label={`${labels[index]}: income ₹${income[index].toLocaleString('en-IN')}, expense ₹${expense[index].toLocaleString('en-IN')}`}
+                    <div className="mt-5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="inline-flex items-center gap-2 font-semibold text-slate-600">
+                            <span
+                                aria-hidden="true"
+                                className="h-2.5 w-2.5 rounded-full bg-brand-600"
                             />
-                        )
-                    })}
+                            Expenses
+                        </span>
 
-                    {hoverIndex !== null && (
-                        <line
-                            x1={(hoverIndex / (labels.length - 1 || 1)) * width}
-                            x2={(hoverIndex / (labels.length - 1 || 1)) * width}
-                            y1={0}
-                            y2={height}
-                            stroke="#8A929C"
-                            strokeDasharray="4 4"
-                            strokeWidth="1"
-                        />
-                    )}
-                </svg>
-
-                {hoverIndex !== null && (
-                    <div
-                        className="pointer-events-none absolute top-0 rounded-xl border border-slate-100 bg-white px-3 py-2 text-xs font-semibold text-heading shadow-lg"
-                        style={{
-                            left: `${(hoverIndex / (labels.length - 1 || 1)) * 100}%`,
-                            transform: 'translate(-50%, -110%)',
-                        }}
-                    >
-                        <p className="text-slate-500">{labels[hoverIndex]}</p>
-                        <p className="text-brand-700">
-                            Income ₹{income[hoverIndex].toLocaleString('en-IN')}
-                        </p>
-                        <p className="text-[#C7513F]">
-                            Expense ₹{expense[hoverIndex].toLocaleString('en-IN')}
-                        </p>
+                        <span className="text-slate-500">
+                            {currentSeries?.caption}
+                        </span>
                     </div>
-                )}
 
-                <div className="mt-1 flex justify-between text-xs font-semibold text-slate-400">
-                    {labels.map((label) => (
-                        <span key={label}>{label}</span>
-                    ))}
-                </div>
-            </div>
-
-            <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {categorySummary.map((category) => (
-                    <div
-                        key={category.label}
-                        className="rounded-2xl border border-slate-100 bg-white/70 p-3"
-                    >
-                        <span
-                            className="inline-block h-2 w-2 rounded-full"
-                            style={{ backgroundColor: category.color }}
+                    <div className="mt-5 flex gap-2 sm:gap-3">
+                        <div
                             aria-hidden="true"
-                        />
-                        <p className="mt-2 text-xs font-semibold text-slate-500">
-                            {category.label}
-                        </p>
-                        <p className="text-sm font-bold text-heading">
-                            ₹{category.value.toLocaleString('en-IN')}
-                        </p>
+                            className="flex h-48 w-14 shrink-0 flex-col justify-between text-right text-[10px] font-semibold text-slate-500 sm:w-16 sm:text-xs"
+                        >
+                            <span>{formatCurrency(axisMaximum)}</span>
+                            <span>{formatCurrency(axisMaximum / 2)}</span>
+                            <span>₹0</span>
+                        </div>
+
+                        <div className="relative min-w-0 flex-1">
+                            <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-x-0 top-0 flex h-48 flex-col justify-between"
+                            >
+                                <div className="border-t border-dashed border-slate-200" />
+                                <div className="border-t border-dashed border-slate-200" />
+                                <div className="border-t border-slate-200" />
+                            </div>
+
+                            <div
+                                role="group"
+                                aria-label={
+                                    period === 'monthly'
+                                        ? 'Monthly expenses by week'
+                                        : 'Weekly expenses by day'
+                                }
+                                className="relative grid gap-1 sm:gap-3"
+                                style={{
+                                    gridTemplateColumns: `repeat(${points.length}, minmax(0, 1fr))`,
+                                }}
+                            >
+                                {points.map((point, index) => {
+                                    const height =
+                                        (point.amount / axisMaximum) * 100
+
+                                    const isSelected =
+                                        selectedIndex === index
+
+                                    return (
+                                        <button
+                                            key={point.label}
+                                            type="button"
+                                            aria-label={`${point.label}: spent ${formatCurrency(point.amount)}`}
+                                            aria-pressed={isSelected}
+                                            onClick={() =>
+                                                setSelectedIndex(index)
+                                            }
+                                            onFocus={() =>
+                                                setSelectedIndex(index)
+                                            }
+                                            onMouseEnter={() =>
+                                                setSelectedIndex(index)
+                                            }
+                                            className="group min-w-0 rounded-lg px-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600"
+                                        >
+                                            <span
+                                                aria-hidden="true"
+                                                className="flex h-48 items-end justify-center"
+                                            >
+                                                <span
+                                                    className={`block w-full max-w-14 rounded-t-lg bg-linear-to-t from-brand-600 to-brand-400 transition-opacity motion-reduce:transition-none ${
+                                                        isSelected
+                                                            ? 'opacity-100 ring-2 ring-brand-700 ring-offset-2'
+                                                            : 'opacity-80 group-hover:opacity-100'
+                                                    }`}
+                                                    style={{
+                                                        height: `${height}%`,
+                                                    }}
+                                                />
+                                            </span>
+
+                                            <span
+                                                aria-hidden="true"
+                                                className="mt-3 block text-[10px] font-semibold text-slate-500 sm:text-xs"
+                                            >
+                                                {point.label}
+                                            </span>
+                                        </button>
+                                    )
+                                })}
+                            </div>
+                        </div>
                     </div>
-                ))}
-            </div>
+
+                    <div className="mt-4 min-h-10 rounded-xl bg-brand-50/60 px-3 py-2 text-sm">
+                        {selectedPoint ? (
+                            <p className="font-semibold text-brand-800">
+                                {selectedPoint.label}
+                                <span className="mx-2 text-brand-300">·</span>
+                                Spent {formatCurrency(selectedPoint.amount)}
+                            </p>
+                        ) : (
+                            <p className="text-slate-500">
+                                Hover, tap, or focus a bar to see its amount.
+                            </p>
+                        )}
+                    </div>
+
+                    {categories.length > 0 && (
+                        <div className="mt-6">
+                            <h3 className="text-sm font-bold text-heading">
+                                {period === 'monthly'
+                                    ? 'Categories this month'
+                                    : 'Categories this week'}
+                            </h3>
+
+                            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                                {categories.map((category) => (
+                                    <div
+                                        key={category.label}
+                                        className="rounded-2xl border border-slate-100 bg-white/70 p-3"
+                                    >
+                                        <span
+                                            aria-hidden="true"
+                                            className="inline-block h-2 w-2 rounded-full"
+                                            style={{
+                                                backgroundColor: category.color,
+                                            }}
+                                        />
+
+                                        <p className="mt-2 text-xs font-semibold text-slate-500">
+                                            {category.label}
+                                        </p>
+
+                                        <p className="mt-1 text-sm font-bold text-heading">
+                                            {formatCurrency(category.value)}
+                                        </p>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </>
+            )}
         </article>
-    )
-}
-
-function SpendingChartHeader({ period, onChange }) {
-    return (
-        <div className="flex items-center justify-between gap-4">
-            <div>
-                <h2 className="text-xl font-bold text-heading">
-                    Spending overview
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                    Income versus expense trend.
-                </p>
-            </div>
-
-            <div
-                role="group"
-                aria-label="Select time period"
-                className="inline-flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-semibold"
-            >
-                {['weekly', 'monthly'].map((option) => (
-                    <button
-                        key={option}
-                        type="button"
-                        aria-pressed={period === option}
-                        onClick={() => onChange(option)}
-                        className={`min-h-9 rounded-lg px-3 capitalize transition ${
-                            period === option
-                                ? 'bg-brand-600 text-white shadow-sm'
-                                : 'text-slate-500 hover:text-brand-700'
-                        }`}
-                    >
-                        {option}
-                    </button>
-                ))}
-            </div>
-        </div>
     )
 }
