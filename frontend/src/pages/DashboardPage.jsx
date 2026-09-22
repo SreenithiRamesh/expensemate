@@ -1,154 +1,126 @@
-import {
-    ArrowUpRight,
-    IndianRupee,
-    ReceiptText,
-    Users,
-    WalletCards,
-} from 'lucide-react'
+import { ArrowDownCircle, ArrowUpCircle, TrendingDown, Wallet } from 'lucide-react'
 
-const summaryCards = [
-    {
-        title: 'Total balance',
-        value: '₹0.00',
-        note: 'Available across accounts',
-        icon: IndianRupee,
-        gradient:
-            'from-brand-600 to-brand-500',
-    },
-    {
-        title: 'Monthly expenses',
-        value: '₹0.00',
-        note: 'No expenses recorded',
-        icon: ReceiptText,
-        gradient:
-            'from-cyan-600 to-sky-500',
-    },
-    {
-        title: 'Active groups',
-        value: '0',
-        note: 'No shared groups yet',
-        icon: Users,
-        gradient:
-            'from-violet-600 to-indigo-500',
-    },
-]
+import { ActivityTimeline } from '../components/dashboard/ActivityTimeline'
+import { AiInsightCard } from '../components/dashboard/AiInsightCard'
+import { BudgetProgress } from '../components/dashboard/BudgetProgress'
+import { DashboardWelcome } from '../components/dashboard/DashboardWelcome'
+import { GroupBalanceCard } from '../components/dashboard/GroupBalanceCard'
+import { QuickActions } from '../components/dashboard/QuickActions'
+import { RecentTransactions } from '../components/dashboard/RecentTransactions'
+import { SpendingChart } from '../components/dashboard/SpendingChart'
+import { SummaryCard } from '../components/dashboard/SummaryCard'
+
+// UI-preview data only. This is the single, clearly-labelled location for
+// placeholder values used by the dashboard's presentational components.
+// It will be replaced with TanStack Query hooks (useDashboardSummary, etc.)
+// during the M32 personal-finance milestone — components already accept
+// this shape via props, so that swap won't require rewriting the UI.
+const dashboardPreviewData = {
+    monthlySpending: 18450,
+    remainingBudget: 11550,
+    owedToUser: 1250,
+    userOwes: 840,
+    transactions: [
+        { id: 't1', title: 'Team lunch', category: 'Food', date: 'Today', amount: -640, split: true },
+        { id: 't2', title: 'Metro recharge', category: 'Travel', date: 'Yesterday', amount: -300, split: false },
+        { id: 't3', title: 'Freelance payment', category: 'Bills', date: '2 days ago', amount: 6000, split: false },
+        { id: 't4', title: 'Grocery run', category: 'Shopping', date: '3 days ago', amount: -1450, split: true },
+    ],
+    activity: [
+        { id: 'a1', type: 'expense', title: 'You added "Team lunch" — ₹640', timestamp: '2 hours ago' },
+        { id: 'a2', type: 'member', title: 'Aisha joined "Goa Trip"', timestamp: 'Yesterday' },
+        { id: 'a3', type: 'settlement', title: 'Settled ₹500 with Rahul', timestamp: '3 days ago' },
+        { id: 'a4', type: 'budget', title: 'Updated "Food" budget to ₹8,000', timestamp: '5 days ago' },
+    ],
+}
 
 function DashboardPage() {
+    function handleQuickAction(actionKey) {
+        // Presentational only — wired to real handlers once routing/forms
+        // for expenses, groups, and budgets land.
+        console.info('Quick action triggered:', actionKey)
+    }
+
     return (
-        <div>
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                <div>
-                    <p className="text-sm font-bold tracking-[0.16em] text-brand-700 uppercase">
-                        Financial command centre
-                    </p>
+        <div className="space-y-6">
+            <DashboardWelcome
+                name="Sree"
+                onAddExpense={() => handleQuickAction('add-expense')}
+                onCreateGroup={() => handleQuickAction('create-group')}
+            />
 
-                    <h1 className="mt-2 text-3xl font-black tracking-tight text-heading sm:text-4xl">
-                        Welcome to ExpenseMate
-                    </h1>
+            <section className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+                <SummaryCard
+                    title="Monthly spending"
+                    value={`₹${dashboardPreviewData.monthlySpending.toLocaleString('en-IN')}`}
+                    change="+8.2%"
+                    trend="up"
+                    icon={Wallet}
+                    variant="teal"
+                    sparklineData={[3, 5, 4, 6, 5, 7, 8]}
+                />
 
-                    <p className="mt-2 text-slate-500">
-                        Your financial overview will appear here.
-                    </p>
-                </div>
+                <SummaryCard
+                    title="Remaining budget"
+                    value={`₹${dashboardPreviewData.remainingBudget.toLocaleString('en-IN')}`}
+                    change="38% left"
+                    trend="neutral"
+                    icon={TrendingDown}
+                    variant="sky"
+                    sparklineData={[8, 7, 7, 6, 6, 5, 5]}
+                />
 
-                <button
-                    type="button"
-                    className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-linear-to-r from-brand-600 to-brand-500 px-5 py-3 font-bold text-white shadow-button transition hover:-translate-y-0.5"
-                >
-                    <WalletCards size={18} />
-                    Add expense
-                </button>
-            </div>
+                <SummaryCard
+                    title="You are owed"
+                    value={`₹${dashboardPreviewData.owedToUser.toLocaleString('en-IN')}`}
+                    change="2 groups"
+                    trend="up"
+                    icon={ArrowUpCircle}
+                    variant="green"
+                    sparklineData={[2, 3, 3, 4, 4, 5, 5]}
+                />
 
-            <section className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-                {summaryCards.map((card) => {
-                    const Icon = card.icon
-
-                    return (
-                        <article
-                            key={card.title}
-                            className="relative overflow-hidden rounded-3xl border border-white/80 bg-white/80 p-6 shadow-sm backdrop-blur-xl transition hover:-translate-y-1 hover:shadow-xl hover:shadow-brand-800/10"
-                        >
-                            <div
-                                aria-hidden="true"
-                                className={`absolute -top-12 -right-12 h-32 w-32 rounded-full bg-linear-to-br ${card.gradient} opacity-10 blur-2xl`}
-                            />
-
-                            <div className="relative flex items-start justify-between">
-                                <div>
-                                    <p className="text-sm font-semibold text-slate-500">
-                                        {card.title}
-                                    </p>
-
-                                    <p className="mt-3 text-3xl font-black text-heading">
-                                        {card.value}
-                                    </p>
-
-                                    <p className="mt-2 text-sm text-slate-500">
-                                        {card.note}
-                                    </p>
-                                </div>
-
-                                <span
-                                    className={`grid h-12 w-12 place-items-center rounded-2xl bg-linear-to-br ${card.gradient} text-white shadow-lg`}
-                                >
-                                    <Icon size={22} />
-                                </span>
-                            </div>
-                        </article>
-                    )
-                })}
+                <SummaryCard
+                    title="You owe"
+                    value={`₹${dashboardPreviewData.userOwes.toLocaleString('en-IN')}`}
+                    change="1 group"
+                    trend="down"
+                    icon={ArrowDownCircle}
+                    variant="rose"
+                    sparklineData={[6, 5, 5, 4, 3, 3, 2]}
+                />
             </section>
 
-            <section className="mt-6 grid gap-6 xl:grid-cols-[1.5fr_1fr]">
-                <article className="min-h-80 rounded-3xl border border-white/80 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
-                    <div className="flex items-center justify-between">
-                        <div>
-                            <h2 className="text-xl font-bold text-heading">
-                                Spending overview
-                            </h2>
+            <section className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+                <SpendingChart hasData />
 
-                            <p className="mt-1 text-sm text-slate-500">
-                                Monthly trends will appear here.
-                            </p>
-                        </div>
+                <div className="space-y-6">
+                    <AiInsightCard />
+                    <GroupBalanceCard
+                        groupName="Goa Trip"
+                        memberInitials={['S', 'A', 'R', 'K']}
+                        memberCount={4}
+                        balance={dashboardPreviewData.owedToUser}
+                        direction="owed"
+                    />
+                </div>
+            </section>
 
-                        <ArrowUpRight className="text-brand-600" />
-                    </div>
+            <section className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+                <RecentTransactions
+                    transactions={dashboardPreviewData.transactions}
+                    onViewAll={() => handleQuickAction('view-all-transactions')}
+                />
 
-                    <div className="mt-8 grid min-h-52 place-items-center rounded-2xl bg-linear-to-br from-brand-50 to-sky-50">
-                        <p className="text-sm font-semibold text-slate-500">
-                            Chart foundation ready
-                        </p>
-                    </div>
-                </article>
+                <BudgetProgress
+                    budget={30000}
+                    used={dashboardPreviewData.monthlySpending}
+                />
+            </section>
 
-                <article className="min-h-80 rounded-3xl border border-white/80 bg-white/80 p-6 shadow-sm backdrop-blur-xl">
-                    <h2 className="text-xl font-bold text-heading">
-                        Recent activity
-                    </h2>
-
-                    <p className="mt-1 text-sm text-slate-500">
-                        Your latest financial actions.
-                    </p>
-
-                    <div className="mt-8 grid min-h-52 place-items-center rounded-2xl border border-dashed border-brand-200 bg-brand-50/50 px-5 text-center">
-                        <div>
-                            <ReceiptText
-                                size={30}
-                                className="mx-auto text-brand-500"
-                            />
-
-                            <p className="mt-3 font-bold text-heading">
-                                No activity yet
-                            </p>
-
-                            <p className="mt-1 text-sm text-slate-500">
-                                New transactions will appear here.
-                            </p>
-                        </div>
-                    </div>
-                </article>
+            <section className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+                <QuickActions onAction={handleQuickAction} />
+                <ActivityTimeline items={dashboardPreviewData.activity} />
             </section>
         </div>
     )

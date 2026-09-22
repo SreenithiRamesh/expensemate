@@ -1,18 +1,12 @@
-import {
-    render,
-    screen,
-} from '@testing-library/react'
-import {
-    afterEach,
-    describe,
-    expect,
-    it,
-} from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import App from './App.jsx'
 import { AppProviders } from './providers/AppProviders'
 
-function renderApp() {
+function renderApp(path) {
+    window.history.pushState({}, '', path)
+
     return render(
         <AppProviders>
             <App />
@@ -22,47 +16,33 @@ function renderApp() {
 
 describe('App routing', () => {
     afterEach(() => {
-        window.history.pushState(
-            {},
-            '',
-            '/',
-        )
+        window.history.pushState({}, '', '/')
     })
 
-    it('renders the ExpenseMate landing page', () => {
-        window.history.pushState(
-            {},
-            '',
-            '/',
-        )
-
-        renderApp()
-
-        expect(
-            screen.getByRole('heading', {
-                name: /your money, beautifully organized/i,
-            }),
-        ).toBeInTheDocument()
-
-        expect(
-            screen.getByRole('button', {
-                name: /foundation ready/i,
-            }),
-        ).toBeInTheDocument()
-    })
-
-    it('renders the dashboard route', async () => {
-        window.history.pushState(
-            {},
-            '',
-            '/app/dashboard',
-        )
-
-        renderApp()
+    it('renders the ExpenseMate landing page', async () => {
+        renderApp('/')
 
         expect(
             await screen.findByRole('heading', {
-                name: /welcome to expensemate/i,
+                level: 1,
+                name: /money management that finally feels simple/i,
+            }),
+        ).toBeInTheDocument()
+
+        expect(
+            screen.getByRole('link', {
+                name: /^start managing expenses$/i,
+            }),
+        ).toHaveAttribute('href', '/register')
+    })
+
+    it('renders the dashboard route', async () => {
+        renderApp('/app/dashboard')
+
+        expect(
+            await screen.findByRole('heading', {
+                level: 1,
+                name: /good (morning|afternoon|evening),/i,
             }),
         ).toBeInTheDocument()
 

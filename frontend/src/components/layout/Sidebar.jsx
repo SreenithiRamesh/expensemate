@@ -5,6 +5,7 @@ import {
     ChevronLeft,
     ChevronRight,
     LayoutDashboard,
+    LogOut,
     ReceiptText,
     Repeat2,
     Users,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
+import { DashboardMascot } from '../dashboard/DashboardMascot'
 import { useUi } from '../../hooks/useUi'
 import { cn } from '../../utils/cn'
 
@@ -137,34 +139,96 @@ export function Sidebar() {
                                     )
                                 }
                             >
-                                <Icon
-                                    size={20}
-                                    className="shrink-0"
-                                />
+                                {({ isActive }) => (
+                                    <>
+                                        <Icon
+                                            size={20}
+                                            className="shrink-0"
+                                            aria-hidden="true"
+                                        />
 
-                                {!isSidebarCollapsed && (
-                                    <span>{item.label}</span>
+                                        {!isSidebarCollapsed && (
+                                            <span>{item.label}</span>
+                                        )}
+
+                                        <span className="sr-only">
+                                            {isActive ? ' (current page)' : ''}
+                                        </span>
+                                    </>
                                 )}
                             </NavLink>
                         )
                     })}
                 </nav>
 
-                <div className="hidden border-t border-slate-100 p-4 lg:block">
+                {!isSidebarCollapsed && (
+                    <div className="px-4 pb-4">
+                        <div className="relative overflow-hidden rounded-2xl bg-linear-to-br from-brand-50 to-sky-50 p-4">
+                            <DashboardMascot
+                                variant="wallet"
+                                className="absolute -right-3 -bottom-3 h-16 w-20 opacity-70"
+                            />
+                            <p className="relative max-w-[10rem] text-sm font-bold text-heading">
+                                Your finances, organized
+                            </p>
+                            <p className="relative mt-1 max-w-[10rem] text-xs text-slate-500">
+                                Track, split, and budget in one place.
+                            </p>
+                        </div>
+                    </div>
+                )}
+
+                <div className="border-t border-slate-100 p-4">
+                    <div
+                        className={cn(
+                            'flex items-center gap-3 rounded-xl px-2 py-2',
+                            isSidebarCollapsed && 'justify-center px-0',
+                        )}
+                    >
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-linear-to-br from-brand-600 to-sky-500 text-sm font-black text-white">
+                            S
+                        </span>
+
+                        {!isSidebarCollapsed && (
+                            <div className="min-w-0">
+                                <p className="truncate text-sm font-bold text-heading">
+                                    Sree
+                                </p>
+                                <p className="truncate text-xs text-slate-500">
+                                    sree@expensemate.app
+                                </p>
+                            </div>
+                        )}
+                    </div>
+
+                    <button
+                        type="button"
+                        aria-label="Log out"
+                        // Placeholder only — no auth logic wired up yet.
+                        onClick={() => console.info('Logout placeholder')}
+                        className={cn(
+                            'mt-2 flex min-h-11 w-full items-center gap-3 rounded-xl px-4 font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600',
+                            isSidebarCollapsed && 'justify-center px-0',
+                        )}
+                    >
+                        <LogOut size={18} className="shrink-0" aria-hidden="true" />
+                        {!isSidebarCollapsed && <span>Log out</span>}
+                    </button>
+
                     <button
                         type="button"
                         onClick={toggleSidebarCollapsed}
                         className={cn(
-                            'flex min-h-11 w-full items-center gap-3 rounded-xl px-4 font-semibold text-slate-500 transition hover:bg-brand-50 hover:text-brand-700',
+                            'mt-1 hidden min-h-11 w-full items-center gap-3 rounded-xl px-4 font-semibold text-slate-500 transition hover:bg-brand-50 hover:text-brand-700 lg:flex',
                             isSidebarCollapsed &&
                             'justify-center px-0',
                         )}
                     >
                         {isSidebarCollapsed ? (
-                            <ChevronRight size={20} />
+                            <ChevronRight size={20} aria-hidden="true" />
                         ) : (
                             <>
-                                <ChevronLeft size={20} />
+                                <ChevronLeft size={20} aria-hidden="true" />
                                 Collapse sidebar
                             </>
                         )}

@@ -34,7 +34,11 @@ export function DashboardShell() {
 
                 <Header />
 
-                <main className="px-5 py-7 sm:px-7 lg:px-9">
+                <main
+                    id="main-content"
+                    aria-label="Dashboard content"
+                    className="px-5 py-7 sm:px-7 lg:px-9"
+                >
                     <Outlet />
                 </main>
             </div>
