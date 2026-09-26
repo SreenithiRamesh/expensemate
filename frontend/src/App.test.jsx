@@ -1,18 +1,28 @@
 import {
-    render,
-    screen,
-} from '@testing-library/react'
-import {
-    afterEach,
+    beforeEach,
     describe,
     expect,
     it,
 } from 'vitest'
+import {
+    render,
+    screen,
+} from '@testing-library/react'
 
-import App from './App.jsx'
+import App from './App'
+import {
+    clearSession,
+    startSession,
+} from './features/auth/authSession'
 import { AppProviders } from './providers/AppProviders'
 
-function renderApp() {
+function renderRoute(path) {
+    window.history.replaceState(
+        {},
+        '',
+        path,
+    )
+
     return render(
         <AppProviders>
             <App />
@@ -20,56 +30,63 @@ function renderApp() {
     )
 }
 
+beforeEach(() => {
+    clearSession()
+
+    window.history.replaceState(
+        {},
+        '',
+        '/',
+    )
+})
+
 describe('App routing', () => {
-    afterEach(() => {
-        window.history.pushState(
-            {},
-            '',
-            '/',
-        )
-    })
-
-    it('renders the ExpenseMate landing page', () => {
-        window.history.pushState(
-            {},
-            '',
-            '/',
-        )
-
-        renderApp()
-
-        expect(
-            screen.getByRole('heading', {
-                name: /your money, beautifully organized/i,
-            }),
-        ).toBeInTheDocument()
-
-        expect(
-            screen.getByRole('button', {
-                name: /foundation ready/i,
-            }),
-        ).toBeInTheDocument()
-    })
-
-    it('renders the dashboard route', async () => {
-        window.history.pushState(
-            {},
-            '',
-            '/app/dashboard',
-        )
-
-        renderApp()
+    it('renders the ExpenseMate landing page', async () => {
+        renderRoute('/')
 
         expect(
             await screen.findByRole('heading', {
-                name: /welcome to expensemate/i,
+                level: 1,
+                name: /money management that finally feels simple/i,
+            }),
+        ).toBeInTheDocument()
+    })
+
+    it('redirects a guest from the dashboard to login', async () => {
+        renderRoute('/app/dashboard')
+
+        expect(
+            await screen.findByRole('heading', {
+                level: 1,
+                name: /welcome back/i,
             }),
         ).toBeInTheDocument()
 
+        expect(window.location.pathname).toBe('/login')
+    })
+
+    it('renders the dashboard for an authenticated user', async () => {
+        startSession({
+            accessToken: 'test-access-token',
+            refreshToken: 'test-refresh-token',
+            tokenType: 'Bearer',
+            expiresIn: 3600,
+            userId: 1,
+            name: 'Sree',
+            email: 'sree@example.com',
+        })
+
+        renderRoute('/app/dashboard')
+
         expect(
-            screen.getByRole('navigation', {
-                name: /primary navigation/i,
+            await screen.findByRole('heading', {
+                level: 1,
+                name: /good (morning|afternoon|evening),/i,
             }),
         ).toBeInTheDocument()
+
+        expect(window.location.pathname).toBe(
+            '/app/dashboard',
+        )
     })
 })
