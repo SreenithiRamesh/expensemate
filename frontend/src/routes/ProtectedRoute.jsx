@@ -4,11 +4,20 @@ import {
     useLocation,
 } from 'react-router-dom'
 
+import AuthLoadingState from '../components/auth/AuthLoadingState'
 import { useAuth } from '../hooks/useAuth'
 
 export default function ProtectedRoute() {
-    const { isAuthenticated } = useAuth()
+    const {
+        isAuthenticated,
+        isInitializing,
+    } = useAuth()
+
     const location = useLocation()
+
+    if (isInitializing) {
+        return <AuthLoadingState />
+    }
 
     if (!isAuthenticated) {
         return (
@@ -17,9 +26,12 @@ export default function ProtectedRoute() {
                 replace
                 state={{
                     from: {
-                        pathname: location.pathname,
-                        search: location.search,
-                        hash: location.hash,
+                        pathname:
+                        location.pathname,
+                        search:
+                        location.search,
+                        hash:
+                        location.hash,
                     },
                 }}
             />

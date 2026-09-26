@@ -22,6 +22,10 @@ const RegisterPage = lazy(() =>
     import('./pages/RegisterPage'),
 )
 
+const UnauthorizedPage = lazy(() =>
+    import('./pages/UnauthorizedPage'),
+)
+
 const DashboardPage = lazy(() =>
     import('./pages/DashboardPage'),
 )
@@ -80,6 +84,11 @@ function App() {
                 <Route
                     path="/register"
                     element={<RegisterPage />}
+                />
+
+                <Route
+                    path="/unauthorized"
+                    element={<UnauthorizedPage />}
                 />
 
                 <Route element={<ProtectedRoute />}>
