@@ -6,9 +6,10 @@ import {
     clearSession,
     getSession,
 } from '../features/auth/authSession'
+import { publishSessionExpired } from '../features/auth/authEvents'
 
 // Each login creates a new user object in authSession.
-// Token refresh preserves that object, so it identifies the session.
+// Refresh preserves the user object, so it identifies the session.
 const sessionKeys = new WeakMap()
 let nextSessionKey = 1
 
@@ -21,7 +22,8 @@ function getSessionKey(session) {
     }
 
     if (!sessionKeys.has(session.user)) {
-        sessionKeys.set(session.user, nextSessionKey++)
+        sessionKeys.set(session.user, nextSessionKey)
+        nextSessionKey += 1
     }
 
     return sessionKeys.get(session.user)
@@ -47,9 +49,9 @@ export const apiClient = axios.create({
     },
 })
 
-// Separate client: refreshing cannot trigger another refresh interceptor.
-// Do not import authApi here; authApi already imports apiClient.
-const refreshClient = axios.create({
+// This separate client does not have the normal response interceptor.
+// Therefore, a failed refresh cannot recursively trigger another refresh.
+export const authRefreshClient = axios.create({
     baseURL: API_V1_URL,
     timeout: 15_000,
     headers: {
@@ -58,16 +60,34 @@ const refreshClient = axios.create({
     },
 })
 
+function expireSession(expectedRefreshToken, reason) {
+    const currentSession = getSession()
+
+    // A refresh from an older session must never log out a newer session.
+    if (
+        !currentSession ||
+        currentSession.refreshToken !== expectedRefreshToken
+    ) {
+        return false
+    }
+
+    clearSession()
+
+    publishSessionExpired(
+        reason)
+
+    return true
+}
+
 function refreshAccessToken(session) {
     const refreshToken = session.refreshToken
-
     const existingRequest = pendingRefreshes.get(refreshToken)
 
     if (existingRequest) {
         return existingRequest
     }
 
-    const refreshRequest = refreshClient
+    const refreshRequest = authRefreshClient
         .post(
             '/auth/refresh',
             { refreshToken },
@@ -92,14 +112,14 @@ function refreshAccessToken(session) {
         .catch((error) => {
             const status = error.response?.status
 
-            // Clear only the session whose refresh token was rejected.
-            // Network errors and server failures do not prove that
-            // the user's credentials are invalid.
-            if (
-                [400, 401, 403].includes(status) &&
-                getSession()?.refreshToken === refreshToken
-            ) {
-                clearSession()
+            // These responses mean that the refresh token is no longer valid.
+            // Network errors and backend 5xx errors do not prove that the
+            // user session is invalid, so the local session is preserved.
+            if ([400, 401, 403].includes(status)) {
+                expireSession(
+                    refreshToken,
+                    'refresh-token-rejected',
+                )
             }
 
             throw error
@@ -115,11 +135,14 @@ function refreshAccessToken(session) {
 
 apiClient.interceptors.request.use((config) => {
     if (!config.headers.has('X-Correlation-ID')) {
-        config.headers.set('X-Correlation-ID', createCorrelationId())
+        config.headers.set(
+            'X-Correlation-ID',
+            createCorrelationId(),
+        )
     }
 
-    // Login/register/refresh/logout requests from authApi
-    // explicitly opt out of automatic bearer authentication.
+    // Login, registration and logout requests explicitly opt out of
+    // bearer authentication and automatic refresh.
     if (config.skipAuth) {
         config.headers.delete('Authorization')
         return config
@@ -128,7 +151,7 @@ apiClient.interceptors.request.use((config) => {
     const session = getSession()
     const sessionKey = getSessionKey(session)
 
-    // A logout or new login may occur while a retry is queued.
+    // A logout or new login may occur while a retried request is queued.
     if (
         config._authRetry &&
         config._authSessionKey !== sessionKey
@@ -155,6 +178,7 @@ apiClient.interceptors.request.use((config) => {
 
 apiClient.interceptors.response.use(
     (response) => response,
+
     async (error) => {
         const request = error.config
 
@@ -170,7 +194,7 @@ apiClient.interceptors.response.use(
 
         const session = getSession()
 
-        // Never replay a previous session's request after a new login.
+        // Do not replay a request belonging to an older login session.
         if (
             !session ||
             getSessionKey(session) !== request._authSessionKey
@@ -178,10 +202,15 @@ apiClient.interceptors.response.use(
             throw error
         }
 
-        // Retry an authenticated request at most once.
+        // An authenticated request may only be retried once.
         if (request._authRetry) {
-            if (session.accessToken === request._authAccessToken) {
-                clearSession()
+            if (
+                session.accessToken === request._authAccessToken
+            ) {
+                expireSession(
+                    session.refreshToken,
+                    'retried-request-rejected',
+                )
             }
 
             throw error
@@ -189,9 +218,11 @@ apiClient.interceptors.response.use(
 
         request._authRetry = true
 
-        // Another request may already have refreshed the token.
-        // If so, reuse that token without refreshing again.
-        if (session.accessToken === request._authAccessToken) {
+        // Another failed request might already have refreshed the token.
+        // If the access token changed, reuse it instead of refreshing again.
+        if (
+            session.accessToken === request._authAccessToken
+        ) {
             await refreshAccessToken(session)
         }
 
@@ -199,15 +230,16 @@ apiClient.interceptors.response.use(
 
         if (
             !currentSession ||
-            getSessionKey(currentSession) !== request._authSessionKey
+            getSessionKey(currentSession) !==
+            request._authSessionKey
         ) {
             throw new axios.CanceledError(
                 'Authentication session changed before retry',
             )
         }
 
-        // Request interceptor attaches the latest access token.
-        // Existing headers, including Idempotency-Key, are preserved.
+        // The request interceptor attaches the latest access token.
+        // Other headers, including Idempotency-Key, are preserved.
         return apiClient.request(request)
     },
 )

@@ -2,6 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import { Toaster } from 'sonner'
 
+import SessionExpiredDialog from '../components/auth/SessionExpiredDialog'
 import ErrorBoundary from '../components/common/ErrorBoundary'
 import { AuthProvider } from '../context/AuthProvider'
 import { UiProvider } from '../context/UiProvider'
@@ -15,6 +16,8 @@ export function AppProviders({ children }) {
                     <UiProvider>
                         <BrowserRouter>
                             {children}
+
+                            <SessionExpiredDialog />
 
                             <Toaster
                                 position="top-right"

@@ -8,7 +8,11 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { CanceledError } from 'axios'
 
-import { loginUser, logoutUser, registerUser } from '../api/authApi'
+import {
+    loginUser,
+    logoutUser,
+    registerUser,
+} from '../api/authApi'
 import {
     clearSession,
     getSession,
@@ -17,6 +21,10 @@ import {
 } from '../features/auth/authSession'
 import { AuthContext } from './AuthContext'
 
+function getServerSessionSnapshot() {
+    return null
+}
+
 export function AuthProvider({ children }) {
     const queryClient = useQueryClient()
     const operationId = useRef(0)
@@ -24,6 +32,7 @@ export function AuthProvider({ children }) {
     const session = useSyncExternalStore(
         subscribeToSession,
         getSession,
+        getServerSessionSnapshot,
     )
 
     useEffect(() => {
@@ -32,8 +41,9 @@ export function AuthProvider({ children }) {
         const unsubscribe = subscribeToSession(() => {
             const nextUser = getSession()?.user ?? null
 
-            // Refresh preserves the user object.
-            // Login/logout changes it: discard cached user data.
+            // Token refresh preserves the same frozen user object.
+            // Login and logout change it, so cached user-specific
+            // server data must be discarded.
             if (previousUser !== nextUser) {
                 previousUser = nextUser
                 queryClient.clear()
@@ -43,15 +53,14 @@ export function AuthProvider({ children }) {
         return () => {
             unsubscribe()
 
-            // Prevent an unfinished login from starting a session
-            // after this provider has been unmounted.
+            // Prevent an unfinished login from starting a session after
+            // this provider has been unmounted.
             operationId.current += 1
         }
     }, [queryClient])
 
     const login = useCallback(async (credentials) => {
         const currentOperation = ++operationId.current
-
         const response = await loginUser(credentials)
 
         // A newer login or logout supersedes this request.
@@ -67,8 +76,8 @@ export function AuthProvider({ children }) {
     }, [])
 
     const register = useCallback(async (details) => {
-        // Registration returns user details, not authentication tokens.
-        // The registration page will direct the user to login.
+        // Registration returns user details but does not create a
+        // frontend authentication session. The user signs in afterward.
         return registerUser(details)
     }, [])
 
@@ -77,15 +86,18 @@ export function AuthProvider({ children }) {
 
         const refreshToken = getSession()?.refreshToken
 
-        // Sign out locally immediately, even if the backend is offline.
+        // Always complete the local logout immediately, even when the
+        // backend is offline.
         clearSession()
         queryClient.clear()
 
-        if (refreshToken) {
-            // If revocation fails, the caller can show a message.
-            // The local session remains cleared.
-            await logoutUser(refreshToken)
+        if (!refreshToken) {
+            return
         }
+
+        // Backend revocation is best-effort. If it fails, the caller may
+        // show a toast, but the local session stays cleared.
+        await logoutUser(refreshToken)
     }, [queryClient])
 
     const user = session?.user ?? null
@@ -94,11 +106,21 @@ export function AuthProvider({ children }) {
         () => ({
             user,
             isAuthenticated: user !== null,
+
+            // Session storage is currently memory-only and synchronous,
+            // so there is no asynchronous bootstrap operation.
+            isInitializing: false,
+
             login,
             register,
             logout,
         }),
-        [user, login, register, logout],
+        [
+            user,
+            login,
+            register,
+            logout,
+        ],
     )
 
     return (
