@@ -5,6 +5,7 @@ import {
     ChevronLeft,
     ChevronRight,
     LayoutDashboard,
+    LoaderCircle,
     LogOut,
     ReceiptText,
     Repeat2,
@@ -14,9 +15,9 @@ import {
 } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
-import { DashboardMascot } from '../dashboard/DashboardMascot'
 import { useUi } from '../../hooks/useUi'
 import { cn } from '../../utils/cn'
+import { DashboardMascot } from '../dashboard/DashboardMascot'
 
 const navigationItems = [
     {
@@ -56,13 +57,44 @@ const navigationItems = [
     },
 ]
 
-export function Sidebar() {
+function getUserName(user) {
+    const name = user?.name?.trim()
+
+    return name || 'ExpenseMate user'
+}
+
+function getUserEmail(user) {
+    const email = user?.email?.trim()
+
+    return email || 'Signed-in user'
+}
+
+function getInitial(name) {
+    return name
+        .charAt(0)
+        .toUpperCase()
+}
+
+export function Sidebar({
+                            user,
+                            onLogout,
+                            isLoggingOut = false,
+                        }) {
     const {
         isSidebarOpen,
         isSidebarCollapsed,
         closeSidebar,
         toggleSidebarCollapsed,
     } = useUi()
+
+    const userName = getUserName(user)
+    const userEmail = getUserEmail(user)
+    const initial = getInitial(userName)
+
+    async function handleLogout() {
+        closeSidebar()
+        await onLogout?.()
+    }
 
     return (
         <>
@@ -89,11 +121,15 @@ export function Sidebar() {
                 <div className="flex h-20 items-center justify-between px-5">
                     <NavLink
                         to="/"
+                        aria-label="ExpenseMate home"
                         className="flex items-center gap-3"
                         onClick={closeSidebar}
                     >
                         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-linear-to-br from-brand-500 via-brand-600 to-brand-800 text-white shadow-lg shadow-brand-600/25">
-                            <WalletCards size={22} />
+                            <WalletCards
+                                size={22}
+                                aria-hidden="true"
+                            />
                         </span>
 
                         {!isSidebarCollapsed && (
@@ -112,7 +148,10 @@ export function Sidebar() {
                         onClick={closeSidebar}
                         className="grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-brand-50 lg:hidden"
                     >
-                        <X size={20} />
+                        <X
+                            size={20}
+                            aria-hidden="true"
+                        />
                     </button>
                 </div>
 
@@ -127,6 +166,11 @@ export function Sidebar() {
                             <NavLink
                                 key={item.to}
                                 to={item.to}
+                                title={
+                                    isSidebarCollapsed
+                                        ? item.label
+                                        : undefined
+                                }
                                 onClick={closeSidebar}
                                 className={({ isActive }) =>
                                     cn(
@@ -148,11 +192,15 @@ export function Sidebar() {
                                         />
 
                                         {!isSidebarCollapsed && (
-                                            <span>{item.label}</span>
+                                            <span>
+                                                {item.label}
+                                            </span>
                                         )}
 
                                         <span className="sr-only">
-                                            {isActive ? ' (current page)' : ''}
+                                            {isActive
+                                                ? ' (current page)'
+                                                : ''}
                                         </span>
                                     </>
                                 )}
@@ -168,9 +216,11 @@ export function Sidebar() {
                                 variant="wallet"
                                 className="absolute -right-3 -bottom-3 h-16 w-20 opacity-70"
                             />
+
                             <p className="relative max-w-[10rem] text-sm font-bold text-heading">
                                 Your finances, organized
                             </p>
+
                             <p className="relative mt-1 max-w-[10rem] text-xs text-slate-500">
                                 Track, split, and budget in one place.
                             </p>
@@ -182,20 +232,25 @@ export function Sidebar() {
                     <div
                         className={cn(
                             'flex items-center gap-3 rounded-xl px-2 py-2',
-                            isSidebarCollapsed && 'justify-center px-0',
+                            isSidebarCollapsed &&
+                            'justify-center px-0',
                         )}
                     >
                         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-linear-to-br from-brand-600 to-sky-500 text-sm font-black text-white">
-                            S
+                            {initial}
                         </span>
 
                         {!isSidebarCollapsed && (
                             <div className="min-w-0">
                                 <p className="truncate text-sm font-bold text-heading">
-                                    Sree
+                                    {userName}
                                 </p>
-                                <p className="truncate text-xs text-slate-500">
-                                    sree@expensemate.app
+
+                                <p
+                                    title={userEmail}
+                                    className="truncate text-xs text-slate-500"
+                                >
+                                    {userEmail}
                                 </p>
                             </div>
                         )}
@@ -203,21 +258,55 @@ export function Sidebar() {
 
                     <button
                         type="button"
-                        aria-label="Log out"
-                        // Placeholder only — no auth logic wired up yet.
-                        onClick={() => console.info('Logout placeholder')}
+                        aria-label={
+                            isLoggingOut
+                                ? 'Logging out'
+                                : 'Log out'
+                        }
+                        title={
+                            isSidebarCollapsed
+                                ? 'Log out'
+                                : undefined
+                        }
+                        disabled={isLoggingOut}
+                        onClick={handleLogout}
                         className={cn(
-                            'mt-2 flex min-h-11 w-full items-center gap-3 rounded-xl px-4 font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600',
-                            isSidebarCollapsed && 'justify-center px-0',
+                            'mt-2 flex min-h-11 w-full items-center gap-3 rounded-xl px-4 font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:opacity-60',
+                            isSidebarCollapsed &&
+                            'justify-center px-0',
                         )}
                     >
-                        <LogOut size={18} className="shrink-0" aria-hidden="true" />
-                        {!isSidebarCollapsed && <span>Log out</span>}
+                        {isLoggingOut ? (
+                            <LoaderCircle
+                                size={18}
+                                aria-hidden="true"
+                                className="shrink-0 animate-spin motion-reduce:animate-none"
+                            />
+                        ) : (
+                            <LogOut
+                                size={18}
+                                className="shrink-0"
+                                aria-hidden="true"
+                            />
+                        )}
+
+                        {!isSidebarCollapsed && (
+                            <span>
+                                {isLoggingOut
+                                    ? 'Logging out…'
+                                    : 'Log out'}
+                            </span>
+                        )}
                     </button>
 
                     <button
                         type="button"
                         onClick={toggleSidebarCollapsed}
+                        aria-label={
+                            isSidebarCollapsed
+                                ? 'Expand sidebar'
+                                : 'Collapse sidebar'
+                        }
                         className={cn(
                             'mt-1 hidden min-h-11 w-full items-center gap-3 rounded-xl px-4 font-semibold text-slate-500 transition hover:bg-brand-50 hover:text-brand-700 lg:flex',
                             isSidebarCollapsed &&
@@ -225,11 +314,19 @@ export function Sidebar() {
                         )}
                     >
                         {isSidebarCollapsed ? (
-                            <ChevronRight size={20} aria-hidden="true" />
+                            <ChevronRight
+                                size={20}
+                                aria-hidden="true"
+                            />
                         ) : (
                             <>
-                                <ChevronLeft size={20} aria-hidden="true" />
-                                Collapse sidebar
+                                <ChevronLeft
+                                    size={20}
+                                    aria-hidden="true"
+                                />
+                                <span>
+                                    Collapse sidebar
+                                </span>
                             </>
                         )}
                     </button>

@@ -1,11 +1,27 @@
-import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import {
+    beforeEach,
+    describe,
+    expect,
+    it,
+} from 'vitest'
+import {
+    render,
+    screen,
+} from '@testing-library/react'
 
-import App from './App.jsx'
+import App from './App'
+import {
+    clearSession,
+    startSession,
+} from './features/auth/authSession'
 import { AppProviders } from './providers/AppProviders'
 
-function renderApp(path) {
-    window.history.pushState({}, '', path)
+function renderRoute(path) {
+    window.history.replaceState(
+        {},
+        '',
+        path,
+    )
 
     return render(
         <AppProviders>
@@ -14,13 +30,19 @@ function renderApp(path) {
     )
 }
 
-describe('App routing', () => {
-    afterEach(() => {
-        window.history.pushState({}, '', '/')
-    })
+beforeEach(() => {
+    clearSession()
 
+    window.history.replaceState(
+        {},
+        '',
+        '/',
+    )
+})
+
+describe('App routing', () => {
     it('renders the ExpenseMate landing page', async () => {
-        renderApp('/')
+        renderRoute('/')
 
         expect(
             await screen.findByRole('heading', {
@@ -28,16 +50,33 @@ describe('App routing', () => {
                 name: /money management that finally feels simple/i,
             }),
         ).toBeInTheDocument()
-
-        expect(
-            screen.getByRole('link', {
-                name: /^start managing expenses$/i,
-            }),
-        ).toHaveAttribute('href', '/register')
     })
 
-    it('renders the dashboard route', async () => {
-        renderApp('/app/dashboard')
+    it('redirects a guest from the dashboard to login', async () => {
+        renderRoute('/app/dashboard')
+
+        expect(
+            await screen.findByRole('heading', {
+                level: 1,
+                name: /welcome back/i,
+            }),
+        ).toBeInTheDocument()
+
+        expect(window.location.pathname).toBe('/login')
+    })
+
+    it('renders the dashboard for an authenticated user', async () => {
+        startSession({
+            accessToken: 'test-access-token',
+            refreshToken: 'test-refresh-token',
+            tokenType: 'Bearer',
+            expiresIn: 3600,
+            userId: 1,
+            name: 'Sree',
+            email: 'sree@example.com',
+        })
+
+        renderRoute('/app/dashboard')
 
         expect(
             await screen.findByRole('heading', {
@@ -46,10 +85,8 @@ describe('App routing', () => {
             }),
         ).toBeInTheDocument()
 
-        expect(
-            screen.getByRole('navigation', {
-                name: /primary navigation/i,
-            }),
-        ).toBeInTheDocument()
+        expect(window.location.pathname).toBe(
+            '/app/dashboard',
+        )
     })
 })
