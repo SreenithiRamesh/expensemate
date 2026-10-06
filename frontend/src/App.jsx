@@ -38,6 +38,12 @@ const BudgetsPage = lazy(() =>
     import('./pages/BudgetsPage'),
 )
 
+const RecurringExpensesPage = lazy(() =>
+    import(
+        './pages/RecurringExpensesPage'
+        ),
+)
+
 const ComingSoonPage = lazy(() =>
     import('./pages/ComingSoonPage'),
 )
@@ -148,7 +154,7 @@ function App() {
                         <Route
                             path="recurring"
                             element={
-                                <ComingSoonPage />
+                                <RecurringExpensesPage />
                             }
                         />
 
