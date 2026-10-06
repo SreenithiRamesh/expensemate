@@ -34,6 +34,10 @@ const ExpensesPage = lazy(() =>
     import('./pages/ExpensesPage'),
 )
 
+const BudgetsPage = lazy(() =>
+    import('./pages/BudgetsPage'),
+)
+
 const ComingSoonPage = lazy(() =>
     import('./pages/ComingSoonPage'),
 )
@@ -43,11 +47,11 @@ const NotFoundPage = lazy(() =>
 )
 
 const DashboardShell = lazy(() =>
-    import('./components/layout/DashboardShell').then(
-        (module) => ({
-            default: module.DashboardShell,
-        }),
-    ),
+    import(
+        './components/layout/DashboardShell'
+        ).then((module) => ({
+        default: module.DashboardShell,
+    })),
 )
 
 function RouteLoader() {
@@ -73,7 +77,9 @@ function RouteLoader() {
 
 function App() {
     return (
-        <Suspense fallback={<RouteLoader />}>
+        <Suspense
+            fallback={<RouteLoader />}
+        >
             <Routes>
                 <Route
                     path="/"
@@ -92,13 +98,21 @@ function App() {
 
                 <Route
                     path="/unauthorized"
-                    element={<UnauthorizedPage />}
+                    element={
+                        <UnauthorizedPage />
+                    }
                 />
 
-                <Route element={<ProtectedRoute />}>
+                <Route
+                    element={
+                        <ProtectedRoute />
+                    }
+                >
                     <Route
                         path="/app"
-                        element={<DashboardShell />}
+                        element={
+                            <DashboardShell />
+                        }
                     >
                         <Route
                             index
@@ -112,37 +126,51 @@ function App() {
 
                         <Route
                             path="dashboard"
-                            element={<DashboardPage />}
+                            element={
+                                <DashboardPage />
+                            }
                         />
 
                         <Route
                             path="expenses"
-                            element={<ExpensesPage />}
+                            element={
+                                <ExpensesPage />
+                            }
                         />
 
                         <Route
                             path="budgets"
-                            element={<ComingSoonPage />}
+                            element={
+                                <BudgetsPage />
+                            }
                         />
 
                         <Route
                             path="recurring"
-                            element={<ComingSoonPage />}
+                            element={
+                                <ComingSoonPage />
+                            }
                         />
 
                         <Route
                             path="groups"
-                            element={<ComingSoonPage />}
+                            element={
+                                <ComingSoonPage />
+                            }
                         />
 
                         <Route
                             path="activity"
-                            element={<ComingSoonPage />}
+                            element={
+                                <ComingSoonPage />
+                            }
                         />
 
                         <Route
                             path="insights"
-                            element={<ComingSoonPage />}
+                            element={
+                                <ComingSoonPage />
+                            }
                         />
                     </Route>
                 </Route>
