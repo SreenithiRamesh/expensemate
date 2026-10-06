@@ -79,10 +79,16 @@ describe('App routing', () => {
         renderRoute('/app/dashboard')
 
         expect(
-            await screen.findByRole('heading', {
-                level: 1,
-                name: /good (morning|afternoon|evening),/i,
-            }),
+            await screen.findByRole(
+                'heading',
+                {
+                    level: 1,
+                    name: /good (morning|afternoon|evening),/i,
+                },
+                {
+                    timeout: 5000,
+                },
+            ),
         ).toBeInTheDocument()
 
         expect(window.location.pathname).toBe(

@@ -30,6 +30,10 @@ const DashboardPage = lazy(() =>
     import('./pages/DashboardPage'),
 )
 
+const ExpensesPage = lazy(() =>
+    import('./pages/ExpensesPage'),
+)
+
 const ComingSoonPage = lazy(() =>
     import('./pages/ComingSoonPage'),
 )
@@ -113,7 +117,7 @@ function App() {
 
                         <Route
                             path="expenses"
-                            element={<ComingSoonPage />}
+                            element={<ExpensesPage />}
                         />
 
                         <Route
