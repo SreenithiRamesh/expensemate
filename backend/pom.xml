@@ -123,7 +123,7 @@
         <dependency>
             <groupId>com.google.genai</groupId>
             <artifactId>google-genai</artifactId>
-            <version>1.71.0</version>
+            <version>1.72.0</version>
         </dependency>
 
         <!-- Test Database -->
